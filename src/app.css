@@ -1,0 +1,237 @@
+/* tresD DICOM — DISPOSICION (misma que VOXEL):
+   barra superior (logo + paciente + herramientas / vistas), panel IZQUIERDO (paso Importar),
+   VISOR en el centro (rejilla multipantalla), panel DERECHO Ver/ocultar, barra de estado abajo. */
+
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+/* ---------------- barra superior ---------------- */
+.topbar { padding: 6px 12px 0; display: flex; flex-direction: column; gap: 5px; }
+.row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.row .spacer { flex: 1; }
+/* logotipo: versión principal «DICOM viewer» también en la barra (decisión de Manuel, 12-09-2026); área de respeto hacia los controles */
+.brand { display: flex; align-items: center; height: 40px; padding: 2px 0; margin-right: 16px; }
+.brand img { height: 36px; width: auto; display: block; }
+.vsep { width: 1px; height: 26px; background: var(--border); margin: 0 4px; }
+#patient-chip { font-weight: 700; font-size: calc(15px * var(--fs)); color: var(--patient-text); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0; }
+.version { font-size: calc(11px * var(--fs)); color: var(--muted); white-space: nowrap; }
+#view-bar .layout-group { display: flex; gap: 4px; margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--border); }
+#view-bar .layout-group button { font-size: calc(13px * var(--fs)); padding: 4px 8px; min-height: 30px; }
+
+/* ---------------- cuerpo ---------------- */
+.body { flex: 1; display: flex; gap: 12px; padding: 6px 12px; min-height: 0; position: relative; }
+#side { width: var(--side-w); flex: 0 0 var(--side-w); background: var(--side-bg); border-radius: 10px;
+  padding: 8px 10px 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.phead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.phead .pin { min-width: 28px; min-height: 26px; padding: 2px 6px; font-size: calc(14px * var(--fs)); }
+
+/* ---- paneles REPLEGABLES (como el visor HTML de VOXEL): anclado = en el flujo; replegado = fuera de
+   pantalla, y aparece como capa flotante al acercar el ratón al borde (franja "hot") o al panel ---- */
+.sidewrap { position: relative; display: flex; min-height: 0; }
+.sidewrap .hot { display: none; }
+.sidewrap.auto { position: absolute; top: 0; bottom: 0; width: 16px; z-index: 6; }
+.sidewrap.auto.left { left: 0; } .sidewrap.auto.right { right: 0; }
+.sidewrap.auto .hot { display: block; position: absolute; top: 0; bottom: 0; width: 16px; }
+.sidewrap.auto.left .hot { left: 0; background: linear-gradient(to right, color-mix(in srgb, var(--accent) 35%, transparent), transparent); }
+.sidewrap.auto.right .hot { right: 0; background: linear-gradient(to left, color-mix(in srgb, var(--accent) 35%, transparent), transparent); }
+.sidewrap.auto .pane { position: absolute; top: 0; bottom: 0; box-shadow: 0 0 22px rgba(0,0,0,.45); opacity: 0;
+  transition: transform .18s ease, opacity .18s ease; pointer-events: none; }
+.sidewrap.auto.left .pane { left: 0; transform: translateX(-100%); }
+.sidewrap.auto.right .pane { right: 0; transform: translateX(100%); }
+.sidewrap.auto:hover .pane, .sidewrap.auto.open .pane { transform: translateX(0); opacity: 1; pointer-events: auto; }
+.sidewrap.auto.right .pane { padding: 6px 8px; background: var(--side-bg); border-radius: 10px; }
+#side .group { border: 1px solid var(--border); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+#side .group > .gtitle { font-weight: 700; color: var(--text2); font-size: calc(13px * var(--fs)); }
+#side .tools { display: flex; flex-direction: column; gap: 6px; }
+#side .tools .btn-ghost { width: 100%; text-align: left; }
+#side .chkcol { display: flex; flex-direction: column; gap: 4px; }
+
+#center { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+#vispanel { width: var(--vis-w); flex: 0 0 var(--vis-w); display: flex; flex-direction: column; gap: 6px;
+  overflow-y: auto; padding: 2px 4px 2px 0; }
+#vispanel .phead { padding-right: 2px; }
+#vispanel .vtitle { font-weight: 800; color: var(--accent); }
+#vispanel .card { display: flex; flex-direction: column; gap: 3px; }
+#vispanel .wrow { display: flex; align-items: center; gap: 6px; }
+#vispanel .wrow label { min-width: 74px; color: var(--hint); font-size: calc(13px * var(--fs)); }
+#vispanel .wrow input[type="range"] { flex: 1; margin: 4px 0; }
+#vispanel .wrow.m-tools { flex-wrap: wrap; }
+#vispanel .wrow.m-tools button { flex: 1 1 45%; white-space: nowrap; }
+#vispanel select { width: 100%; font-size: calc(13px * var(--fs)); padding: 4px 6px; }
+.collapsible > .ctitle { background: transparent; border: none; color: var(--dicom-text); font-weight: 700;
+  text-align: left; padding: 0; display: flex; align-items: center; gap: 6px; }
+.collapsible > .ctitle::before { content: "\25B8"; font-size: calc(12px * var(--fs)); }
+.collapsible.open > .ctitle::before { content: "\25BE"; }
+.collapsible > .ccontent { display: none; padding-left: 12px; }
+.collapsible.open > .ccontent { display: flex; flex-direction: column; gap: 2px; }
+
+/* ---------------- zona de arrastre (DropArea) ---------------- */
+.drop { border: 2px dashed var(--seg-border); border-radius: 14px; background: var(--seg-bg);
+  color: var(--seg-text); display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; text-align: center; cursor: pointer; padding: 18px; transition: background .15s, border-color .15s; }
+.drop:hover, .drop.over { background: var(--seg-hover); border-color: var(--accent); }
+#side .drop { min-height: 120px; font-size: calc(14px * var(--fs)); }
+/* pantalla inicial: versión PRINCIPAL del logotipo (≥ 260 px) + una línea de apoyo (manual, cap. 6) */
+#main-drop { position: absolute; inset: 0; font-size: calc(17px * var(--fs)); gap: 10px; }
+#main-drop img { width: min(56%, 560px); min-width: 260px; max-height: 26%; object-fit: contain; margin-bottom: 14px; }
+#main-drop .drop-cta { font-weight: 500; color: var(--accent); margin-top: 26px; }
+#main-drop .owner { position: absolute; bottom: 14px; font-size: calc(12px * var(--fs)); color: var(--muted); font-weight: 500; }
+
+/* ---------------- rejilla de visores (multipantalla) ---------------- */
+#grid { position: absolute; inset: 0; display: grid; gap: 6px; }
+#grid[data-layout="quad"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+#grid[data-layout="main3"] { grid-template-columns: 3fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+#grid[data-layout="main3"] .vp[data-id="vp3d"] { grid-row: 1 / span 3; }
+#grid[data-layout="row"] { grid-template-columns: 1fr 1fr 1fr 1fr; grid-template-rows: 1fr; }
+#grid[data-layout="single"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+#grid[data-layout="pair"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+#grid .vp { position: relative; background: var(--viewer-bg); border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; min-width: 0; min-height: 0; }
+#grid .vp.hidden { display: none; }
+#grid .vp .cs { position: absolute; inset: 0; }
+#grid .vp .cs canvas { display: block; }
+#grid .vp .vplabel { position: absolute; left: 8px; top: 6px; font-size: calc(12px * var(--fs)); font-weight: 700; color: var(--overlay-text);
+  background: color-mix(in srgb, var(--viewer-bg) 70%, transparent); padding: 2px 7px; border-radius: 6px; pointer-events: none; z-index: 3; }
+#grid .vp .vpinfo { position: absolute; left: 8px; bottom: 6px; font-size: calc(11px * var(--fs)); color: var(--text2);
+  background: color-mix(in srgb, var(--viewer-bg) 70%, transparent); padding: 2px 7px; border-radius: 6px; pointer-events: none; z-index: 3; white-space: pre; }
+#grid .vp .vpmax { position: absolute; right: 6px; top: 6px; z-index: 3; width: 26px; height: 24px; padding: 0; font-size: calc(13px * var(--fs)); line-height: 1; }
+#grid .vp .orient { position: absolute; font-size: calc(12px * var(--fs)); font-weight: 700; color: var(--cyan); pointer-events: none; z-index: 3; opacity: .85; }
+#grid .vp .orient.t { top: 6px; left: 50%; transform: translateX(-50%); }
+#grid .vp .orient.b { bottom: 6px; left: 50%; transform: translateX(-50%); }
+#grid .vp .orient.l { left: 8px; top: 50%; transform: translateY(-50%); }
+#grid .vp .orient.r { right: 8px; top: 50%; transform: translateY(-50%); }
+#grid .vp .overlay { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+#grid .vp .overlay svg.rubber { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#grid .vp .overlay svg.rubber line { stroke-width: 2; stroke-dasharray: 6 4; }
+#grid .vp .mlabel.live { transform: none; pointer-events: none; cursor: default; color: #0B0F1A; }
+#grid .vp .silh { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+#grid .vp .mlabel { position: absolute; transform: translate(-50%, -50%); font-size: calc(12px * var(--fs)); font-weight: 800;
+  padding: 1px 6px; border-radius: 6px; background: rgba(0,0,0,.55); color: #fff; white-space: nowrap; pointer-events: auto; cursor: grab; user-select: none; }
+#grid .vp .cs, #grid .vp .cs * { cursor: default !important; }   /* sin el icono W/L de Cornerstone */
+#grid .vp.measuring .cs, #grid.measuring .vp .cs, #grid.measuring .vp .cs * { cursor: crosshair !important; }
+#grid .vp.maximized { }
+
+/* ---------------- barra de estado ---------------- */
+.status { background: var(--surface); color: var(--text2); border-top: 1px solid var(--border); padding: 4px 12px;
+  font-size: calc(13px * var(--fs)); display: flex; align-items: center; gap: 12px; min-height: 28px; }
+.status .progress { width: 220px; }
+
+/* ---------------- cajon de METADATOS ---------------- */
+#meta-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 92vw); background: var(--surface);
+  border-left: 1px solid var(--border); box-shadow: -12px 0 40px rgba(0,0,0,.4); z-index: 40; transform: translateX(100%);
+  transition: transform .2s ease; display: flex; flex-direction: column; }
+#meta-drawer.open { transform: translateX(0); }
+#meta-drawer .mhead { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+#meta-drawer .mhead h2 { font-size: calc(18px * var(--fs)); margin: 0; color: var(--accent); flex: 1; }
+#meta-drawer .msummary { padding: 8px 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 14px;
+  font-size: calc(13px * var(--fs)); border-bottom: 1px solid var(--border); }
+#meta-drawer .msummary b { color: var(--text2); font-weight: 600; }
+#meta-drawer .mbody { flex: 1; overflow: auto; padding: 0 12px 12px; }
+#meta-drawer input[type="search"] { width: 260px; }
+#meta-drawer td.val { font-family: Consolas, "Courier New", monospace; font-size: calc(12px * var(--fs)); word-break: break-all; }
+
+/* ---------------- dialogos ---------------- */
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 60; display: flex; align-items: center; justify-content: center; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; min-width: 360px; max-width: 640px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 12px; }
+.modal h3 { margin: 0; color: var(--accent); font-size: calc(18px * var(--fs)); }
+.modal .mrow { display: flex; gap: 8px; justify-content: flex-end; }
+.series-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.series-item { text-align: left; background: var(--surface2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; color: var(--text); }
+.series-item:hover { border-color: var(--accent); }
+.series-item.sel { border-color: var(--accent); background: var(--seg-hover); }
+.series-item small { display: block; color: var(--text2); font-size: calc(12px * var(--fs)); }
+
+/* estado vacio: se ocultan controles hasta cargar un caso */
+.hidden { display: none !important; }
+
+@media (max-width: 1100px) {
+  :root { --side-w: 280px; --vis-w: 240px; }
+}
+
+/* ---------------- escáneres intraorales (Fase 2) ---------------- */
+#mesh-cards { display: flex; flex-direction: column; gap: 6px; }
+#vispanel .card.mesh input[type="color"] { width: 34px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: transparent; cursor: pointer; }
+#vispanel .card.mesh .m-real { font-size: calc(12px * var(--fs)); margin-left: 6px; }
+#vispanel .card.mesh .m-flip, #vispanel .card.mesh .m-align { flex: 1; text-align: left; }
+.modal .roles { display: flex; gap: 14px; flex-wrap: wrap; }
+.modal .exp-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow: auto; padding: 2px 0; }
+.modal .exp-list small { color: var(--text2); }
+.modal .hint.warn { color: var(--warn, #F59E0B); }
+
+/* ---------------- textos legales (términos / aviso legal / privacidad) ---------------- */
+.status .legal-links { margin-left: auto; font-size: calc(11px * var(--fs)); color: var(--muted); white-space: nowrap; }
+.status .legal-links a { color: var(--muted); text-decoration: none; }
+.status .legal-links a:hover { color: var(--accent); text-decoration: underline; }
+.modal.legal { width: min(760px, 94vw); max-width: 760px; gap: 10px; }
+.modal.legal .legal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.modal.legal .legal-lang { display: flex; gap: 4px; }
+.modal.legal .legal-lang .on, .modal.legal .legal-tabs .on { border-color: var(--accent); color: var(--accent); }
+.modal.legal .legal-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.modal.legal .legal-body { max-height: 52vh; overflow: auto; padding: 4px 10px 4px 0; font-size: calc(13px * var(--fs)); line-height: 1.5; color: var(--text); }
+.modal.legal .legal-body h3 { margin: 0 0 6px; color: var(--accent); font-size: calc(16px * var(--fs)); }
+.modal.legal .legal-body p { margin: 6px 0; }
+.modal.legal .legal-body ul { margin: 4px 0 8px 18px; padding: 0; }
+.modal.legal .legal-body a { color: var(--accent); }
+.modal.legal .legal-accept { align-items: flex-start; font-size: calc(13px * var(--fs)); line-height: 1.4; }
+.modal.legal .legal-accept input { margin-top: 3px; flex: 0 0 auto; }
+
+/* ---------------- foto facial (registro manual) ---------------- */
+.modal.photo { max-width: 92vw; max-height: 94vh; overflow: auto; gap: 8px; }
+.modal.photo canvas { display: block; max-width: 84vw; border-radius: 8px; cursor: crosshair; background: #000; }
+.modal.photo .next { color: var(--accent); font-weight: 700; }
+#vispanel .card.mesh .m-photo { border-top: 1px dashed var(--border); padding-top: 4px; }
+
+/* ---------------- alineación por puntos: barra flotante en el visor 3D ---------------- */
+#grid .vp .pa-bar { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 4; display: flex; gap: 8px; align-items: center;
+  background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: 10px; padding: 6px 12px; font-size: calc(13px * var(--fs)); font-weight: 700;
+  box-shadow: 0 4px 16px rgba(0,0,0,.35); max-width: 92%; }
+#grid .vp .pa-bar button { min-height: 28px; padding: 2px 10px; }
+
+/* ---------------- panorámica (corte curvo) ---------------- */
+#grid .vp[data-id="vpPan"] .pan-wrap { position: absolute; inset: 0 0 40px 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#grid .vp[data-id="vpPan"] canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; cursor: default; }
+#grid .vp[data-id="vpPan"] .pan-bar, #grid .vp[data-id="vpAtm"] .pan-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 12px;
+  background: color-mix(in srgb, var(--viewer-bg) 85%, transparent); border-top: 1px solid var(--border); font-size: calc(12px * var(--fs)); color: var(--text2); z-index: 3;
+  white-space: nowrap; flex-wrap: nowrap; overflow: hidden; }
+#grid .vp[data-id="vpPan"] .pan-bar input[type="range"] { flex: 0 1 140px; min-width: 56px; }
+#grid .vp[data-id="vpPan"] .pan-bar > label, #grid .vp[data-id="vpPan"] .pan-bar > span { flex: 0 0 auto; }
+#grid .vp[data-id="vpAtm"] .pan-bar button { min-height: 26px; padding: 2px 10px; font-size: calc(12px * var(--fs)); flex: 0 0 auto; }
+#grid .vp[data-id="vpAtm"] .pan-bar .atm-legend { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#grid .vp[data-id="vpPan"] .pan-bar button { min-height: 26px; padding: 2px 10px; font-size: calc(12px * var(--fs)); }
+#grid .vp[data-id="vpPan"] .pan-bar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#grid .vp.editing .cs, #grid .vp.editing .cs * { cursor: crosshair !important; }
+#grid .vp[data-id="vpPan"] .pan-bar #pan-thick-val { min-width: 44px; }
+#grid .vp[data-id="vpPan"] .vpinfo { bottom: 46px; }
+
+/* ---------------- cortes de ATM (mosaico por lado) ---------------- */
+#grid .vp[data-id="vpAtm"] .atm-grid { position: absolute; inset: 26px 0 42px 0; display: grid; gap: 4px 3px;
+  grid-template-columns: 56px repeat(5, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); align-content: center;
+  justify-content: center; padding: 0 8px; overflow: hidden; }
+#grid .vp[data-id="vpAtm"] .atm-side { grid-row: span 2; }
+
+#grid .vp[data-id="vpAtm"] .atm-side { display: flex; align-items: center; justify-content: center; font-weight: 800;
+  color: var(--accent); font-size: calc(14px * var(--fs)); writing-mode: vertical-rl; transform: rotate(180deg); }
+#grid .vp[data-id="vpAtm"] .atm-cell { position: relative; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center;
+  background: #000; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+#grid .vp[data-id="vpAtm"] .atm-cell canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* el rótulo va SIEMPRE en blanco sobre pastilla oscura: las imágenes son claras y en modo claro
+   `--overlay-text` es oscuro, así que antes no se leía (v0.7.2). */
+#grid .vp[data-id="vpAtm"] .atm-cell span { position: absolute; left: 3px; top: 2px; font-size: calc(10px * var(--fs));
+  color: #fff; background: rgba(0,0,0,.62); padding: 0 4px; border-radius: 4px; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+#grid .vp[data-id="vpAtm"] .atm-cell canvas { cursor: crosshair; touch-action: none; }
+#grid .vp[data-id="vpAtm"] .atm-cell.atm-gap { border: none; background: transparent; }
+
+/* ---------------- vía aérea: tabla de valores en la tarjeta ---------------- */
+#vispanel .card.mesh .aw-values { border-top: 1px dashed var(--border); padding-top: 4px; font-size: calc(12px * var(--fs)); }
+#vispanel .card.mesh .aw-title { font-weight: 700; color: var(--accent); margin-bottom: 3px; }
+#vispanel .card.mesh .aw-table { width: 100%; border-collapse: collapse; font-size: calc(11.5px * var(--fs)); }
+#vispanel .card.mesh .aw-table th { text-align: left; color: var(--text2); font-weight: 600; padding: 2px 3px; border-bottom: 1px solid var(--border); }
+#vispanel .card.mesh .aw-table td { padding: 2px 3px; vertical-align: top; }
+#vispanel .card.mesh .aw-table tr.green td { color: #34D399; }
+#vispanel .card.mesh .aw-table tr.orange td { color: #F59E0B; }
+#vispanel .card.mesh .aw-table tr.red td { color: #F87171; }
+#vispanel .card.mesh .aw-note { margin-top: 3px; color: var(--text2); }
+#vispanel .card.mesh .aw-note.warn { color: var(--warn, #F59E0B); }
+#vispanel .card.mesh .aw-ref { margin-top: 4px; color: var(--muted); font-size: calc(10.5px * var(--fs)); line-height: 1.3; }
+#btn-cross[aria-pressed="true"], #btn-rotate[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }

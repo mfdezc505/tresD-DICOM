@@ -1,0 +1,171 @@
+/* tresD DICOM — TEMA según el MANUAL DE MARCA tresD DICOM v1.2 (marca/tresD_DICOM_Manual_de_Marca.html):
+   paleta tresD (verde tresD #004A46, verde bisel #10A23B, menta #89CBC4, azul bisel #ADD9E9; sobre oscuro
+   #B6D8E7 / #97C9C3 / #399F48), fondo oscuro #0B0F1A, gris tagline #373736 / #AEBABA, degradado de marca
+   a 108° (claro: verde tresD → verde bisel → menta; oscuro: azul → menta → verde) reservado a UN acento por
+   pantalla (botón principal), tipografía Poppins (OFL, en public/fonts). Disposición heredada de VOXEL. */
+
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 300; font-display: swap; src: url("../fonts/poppins-latin-300-normal.woff2") format("woff2"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 400; font-display: swap; src: url("../fonts/poppins-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 500; font-display: swap; src: url("../fonts/poppins-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 600; font-display: swap; src: url("../fonts/poppins-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 700; font-display: swap; src: url("../fonts/poppins-latin-700-normal.woff2") format("woff2"); }
+
+:root {
+  /* paleta de marca (iguales en ambos temas) */
+  --green: #004A46;      /* verde tresD */
+  --green2: #10A23B;     /* verde bisel */
+  --mint: #89CBC4;       /* menta bisel */
+  --blue: #ADD9E9;       /* azul bisel */
+  --green-dk: #399F48; --mint-dk: #97C9C3; --blue-dk: #B6D8E7;   /* variantes sobre oscuro */
+  --grad-brand: linear-gradient(108deg, #004A46 0%, #10A23B 55%, #89CBC4 100%);
+  --grad-brand-dark: linear-gradient(108deg, #B6D8E7 0%, #97C9C3 50%, #399F48 100%);
+  --ok: #10A23B;
+  --warn: #F59E0B;
+  --bad: #E05252;
+  --cyan: #22D3EE;       /* letras de orientación en los cortes (semántico, no de marca) */
+  --font: "Poppins", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --radius: 12px;
+  --side-w: 300px;
+  --vis-w: 290px;
+  --fs: 1;              /* factor de tamaño de letra (Ajustes: Aa) */
+}
+
+/* ---- LIGHT (sobre blanco, como el manual) ---- */
+:root[data-theme="light"] {
+  --window-bg: #FFFFFF; --side-bg: #F2F6F5; --surface: #FFFFFF; --surface2: #EEF4F3;
+  --border: #D5E1DF; --text: #1B2A28; --text2: #373736; --hint: #5B6A68; --muted: #7B8A88;
+  --accent: #004A46; --accent-hover: #10A23B; --accent-disabled: #B9CBC8;
+  --grad: linear-gradient(108deg, #004A46 0%, #0F8A3C 100%); --grad-h: linear-gradient(108deg, #063F3C 0%, #10A23B 100%); --grad-text: #FFFFFF;
+  --seg-bg: #EEF4F3; --seg-hover: #E2EEEC; --seg-border: #C9DAD6; --seg-text: #004A46;
+  --ghost-bg: #F2F6F5; --ghost-hover: #E2EEEC; --ghost-border: #D5E1DF; --ghost-text: #004A46;
+  --step-done-bg: #E8F7EE; --step-done-fg: #10A23B; --step-done-bd: #8FD6A9;
+  --step-pending-bg: #FFFFFF; --step-pending-fg: #8A93A3; --step-pending-bd: #DFE6F0;
+  --dicom-bg: #EEF4F3; --dicom-bd: #C9DAD6; --dicom-text: #004A46;
+  --mesh-bg: #FFFFFF; --mesh-bd: #D5E1DF;
+  --lmk-bg: #FDF2F8; --lmk-bd: #F3D6E4; --lmk-text: #BE185D;
+  --trash-fg: #D04545; --trash-bd: #E2B4B4; --trash-bg: #FDEEEE;
+  --patient-text: #004A46;
+  --viewer-bg: #FFFFFF; --viewer-bg-rgb: 1, 1, 1;
+  --menu-bg: #FFFFFF; --menu-text: #1B2A28; --menu-sel: #EEF4F3;
+  --input-bg: #FFFFFF;
+  --overlay-text: #1B2A28;
+  --thumb: radial-gradient(circle at 35% 32%, #4FC46B 0%, #10A23B 55%, #004A46 100%);
+  --thumb-h: radial-gradient(circle at 35% 32%, #9FDDB0 0%, #10A23B 55%, #004A46 100%);
+  color-scheme: light;
+}
+
+/* ---- DARK (por defecto; fondo #0B0F1A del manual) ---- */
+:root[data-theme="dark"] {
+  --window-bg: #0B0F1A; --side-bg: #0F1523; --surface: #141A28; --surface2: #1C2333;
+  --border: #2A3350; --text: #EEF2FF; --text2: #AEBABA; --hint: #AEBABA; --muted: #8E9A9A;
+  --accent: #89CBC4; --accent-hover: #B6D8E7; --accent-disabled: #3A4A48;
+  --grad: linear-gradient(108deg, #B6D8E7 0%, #97C9C3 50%, #399F48 100%); --grad-h: linear-gradient(108deg, #C9E4EF 0%, #A9D5CF 50%, #4DB05C 100%); --grad-text: #0B0F1A;
+  --seg-bg: #14201F; --seg-hover: #1A2B29; --seg-border: #234A45; --seg-text: #97C9C3;
+  --ghost-bg: #141A28; --ghost-hover: #1C2333; --ghost-border: #2A3350; --ghost-text: #97C9C3;
+  --step-done-bg: #123322; --step-done-fg: #399F48; --step-done-bd: #1F6D4A;
+  --step-pending-bg: #141A28; --step-pending-fg: #AEBABA; --step-pending-bd: #2A3350;
+  --dicom-bg: #14201F; --dicom-bd: #234A45; --dicom-text: #97C9C3;
+  --mesh-bg: #141A28; --mesh-bd: #2A3350;
+  --lmk-bg: #2A1830; --lmk-bd: #4A2A44; --lmk-text: #F0ABCC;
+  --trash-fg: #F87171; --trash-bd: #5A2A2A; --trash-bg: #241416;
+  --patient-text: #B6D8E7;
+  --viewer-bg: #0B0F1A; --viewer-bg-rgb: 0.043, 0.059, 0.102;
+  --menu-bg: #141A28; --menu-text: #EEF2FF; --menu-sel: #1C2333;
+  --input-bg: #141A28;
+  --overlay-text: #EEF2FF;
+  --thumb: radial-gradient(circle at 35% 32%, #C9E4EF 0%, #97C9C3 55%, #399F48 100%);
+  --thumb-h: radial-gradient(circle at 35% 32%, #E0F0F6 0%, #B6D8E7 55%, #4DB05C 100%);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--window-bg); color: var(--text); font-family: var(--font); font-size: calc(14px * var(--fs));
+  overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+button, input, select { font-family: inherit; font-size: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .55; }
+
+h1.h1 { font-size: calc(20px * var(--fs)); font-weight: 700; color: var(--accent); margin: 0; letter-spacing: -0.01em; }
+.hint { color: var(--hint); font-size: calc(13px * var(--fs)); line-height: 1.35; }
+.small { font-size: calc(11px * var(--fs)); color: var(--hint); }
+
+/* ---- BOTONES (QPushButton#primary / #segbtn / #ghost) ---- */
+.btn-primary {
+  font-size: calc(14.5px * var(--fs)); font-weight: 600; color: var(--grad-text); background: var(--grad); border: none;
+  border-radius: 11px; padding: 8px 10px; min-height: calc(40px * var(--fs)); width: 100%; text-align: center;
+}
+.btn-primary:hover { background: var(--grad-h); }
+.btn-primary:disabled { background: var(--accent-disabled); color: #fff; }
+.btn-seg {
+  font-size: calc(14.5px * var(--fs)); font-weight: 600; color: var(--grad-text); background: var(--grad); border: none;
+  border-radius: 11px; padding: 8px 10px; min-height: calc(40px * var(--fs)); width: 100%; text-align: center;
+}
+.btn-seg:hover { background: var(--grad-h); }
+.btn-ghost {
+  font-size: calc(13.5px * var(--fs)); color: var(--ghost-text); background: var(--ghost-bg);
+  border: 1px solid var(--ghost-border); border-radius: 9px; padding: 5px 10px; min-height: calc(31px * var(--fs));
+  white-space: nowrap;
+}
+.btn-ghost:hover { background: var(--ghost-hover); }
+.btn-ghost.on, .btn-ghost[aria-pressed="true"] {
+  background: var(--seg-hover); border-color: var(--accent); color: var(--accent);
+}
+.btn-ghost.big { font-size: calc(14px * var(--fs)); font-weight: 500; padding: 7px 10px; min-height: calc(38px * var(--fs)); width: 100%; white-space: normal; line-height: 1.2; }
+.btn-icon { min-width: 34px; padding: 6px 8px; }
+.btn-trash {
+  color: var(--trash-fg); font-weight: 800; border: 1px solid var(--trash-bd); border-radius: 5px;
+  background: var(--trash-bg); width: 24px; height: 20px; padding: 0; line-height: 1;
+}
+
+/* ---- TARJETAS (theme.card_qss) ---- */
+.card { border-radius: 8px; border: 1px solid var(--mesh-bd); background: var(--mesh-bg); padding: 6px 8px; }
+.card.dicom { background: var(--dicom-bg); border-color: var(--dicom-bd); }
+.card.dicom .card-title { color: var(--dicom-text); }
+.card-title { font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+
+/* ---- INPUTS ---- */
+input[type="text"], input[type="search"], select {
+  background: var(--input-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; padding: 6px 8px; outline: none;
+}
+input[type="text"]:focus, input[type="search"]:focus, select:focus { border: 2px solid var(--accent); }
+label.chk { display: inline-flex; align-items: center; gap: 6px; color: var(--text); cursor: pointer; }
+input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+
+/* slider con degradado (QSlider) */
+input[type="range"] { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 3px;
+  background: var(--border); outline: none; width: 100%; margin: 8px 0; }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px;
+  border-radius: 50%; border: 2px solid #fff; cursor: pointer; background: var(--thumb); }
+input[type="range"]::-webkit-slider-thumb:hover { background: var(--thumb-h); }
+input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; background: var(--thumb); }
+input[type="range"]:disabled { opacity: .45; }
+
+/* scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* tabla (QTableWidget) */
+table.tbl { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; font-size: calc(13px * var(--fs)); }
+table.tbl th { background: var(--surface2); color: var(--text2); font-weight: 600; text-align: left;
+  padding: 4px 6px; border-bottom: 1px solid var(--border); position: sticky; top: 0; }
+table.tbl td { padding: 3px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.tbl tr:nth-child(even) td { background: color-mix(in srgb, var(--surface2) 55%, transparent); }
+
+/* barra de progreso (QProgressBar) */
+.progress { background: var(--surface2); border: 1px solid var(--border); border-radius: 7px; height: 16px; overflow: hidden; }
+.progress > div { height: 100%; background: linear-gradient(90deg, #004A46, #10A23B, #89CBC4); border-radius: 6px; width: 0; transition: width .15s; }
+
+/* tooltips nativos: nada que hacer. Menus emergentes */
+.menu { position: absolute; z-index: 50; background: var(--menu-bg); color: var(--menu-text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-width: 200px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.menu button { display: block; width: 100%; text-align: left; background: transparent; border: none;
+  padding: 7px 10px; border-radius: 6px; color: var(--menu-text); }
+.menu button:hover { background: var(--menu-sel); }
