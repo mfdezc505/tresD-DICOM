@@ -26,7 +26,7 @@ fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(OUT, { recursive:
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl', '--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 }, locale: 'es-ES', acceptDownloads: true });
-await page.addInitScript(() => { try { localStorage.setItem('tresd_dicom_terms', 'v1-2026-09'); } catch (e) {} });
+await page.addInitScript(() => { try { localStorage.setItem('tresd_dicom_terms', 'v1-2026-09'); localStorage.setItem('tresd_dicom_feedback', 'done'); } catch (e) {} });
 page.setDefaultTimeout(300000);
 const errs = []; let fails = 0;
 page.on('console', (m) => { const tx = m.text(); if (m.type() === 'error' && !/favicon/.test(tx)) errs.push(tx.slice(0, 250)); });
@@ -126,7 +126,9 @@ await ev(() => window.tresd.V.buildTmj({ R: [-54, -24, 43], L: [50, -29, 45] }, 
 await page.waitForFunction(() => window.tresd.V.state.tmj, null, { timeout: 300000 });
 await ev(() => window.tresd.renderTmj());
 await page.click('#lay-atm');
-await sleep(900);
+// el encuadre llega tras el resize del render 3D (lento en SwiftShader con mallas): se espera a que se aplique
+await page.waitForFunction(() => document.querySelector('#atm-grid').style.gridAutoRows !== '', null, { timeout: 30000 });
+await sleep(600);
 const tmj = await ev(() => {
   const s = window.tresd.V.state.tmj.series.R[2].img;
   const cell = document.querySelector('#atm-grid .atm-cell:not(.atm-gap)');
@@ -138,8 +140,12 @@ check(tmj.h * tmj.step > 30 && tmj.w * tmj.step > 24, `campo del corte ${(tmj.w 
 const hueco = Math.abs(tmj.cell - tmj.w / tmj.h) / tmj.cell;
 check(hueco < 0.1, `el corte llena la casilla (casilla ${tmj.cell.toFixed(2)} vs corte ${(tmj.w / tmj.h).toFixed(2)}: ${Math.round(hueco * 100)} % de franja negra)`);
 // y se reencuadra si cambia el tamaño de la ventana
+const rows0 = await ev(() => document.querySelector('#atm-grid').style.gridAutoRows);
 await page.setViewportSize({ width: 1200, height: 980 });
-await sleep(1400);
+// el reencuadre va 350 ms después del último «resize», pero con mallas segmentadas el propio resize del
+// render 3D tarda más de 1 s en SwiftShader: se espera a que cambie la altura de las filas, no un tiempo fijo
+await page.waitForFunction((r0) => document.querySelector('#atm-grid').style.gridAutoRows !== r0, rows0, { timeout: 30000 });
+await sleep(600);
 const tmj2 = await ev(() => {
   const s = window.tresd.V.state.tmj.series.R[2].img;
   const r = document.querySelector('#atm-grid .atm-cell:not(.atm-gap)').getBoundingClientRect();

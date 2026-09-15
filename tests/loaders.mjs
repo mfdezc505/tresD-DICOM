@@ -29,7 +29,7 @@ const CASES = [
 ];
 for (const c of (process.argv[2] ? CASES.filter((x) => x.name === process.argv[2]) : CASES)) {
   const page = await browser.newPage({ viewport: { width: 1300, height: 800 }, locale: 'es-ES' });
-  await page.addInitScript(() => { try { localStorage.setItem('tresd_dicom_terms', 'v1-2026-09'); } catch (e) {} });
+  await page.addInitScript(() => { try { localStorage.setItem('tresd_dicom_terms', 'v1-2026-09'); localStorage.setItem('tresd_dicom_feedback', 'done'); } catch (e) {} });
   page.setDefaultTimeout(240000);
   const errs = [];
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 300)); });

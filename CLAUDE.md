@@ -20,7 +20,11 @@ verdad a los cóndilos al marcarlos y medial/lateral correctos en CBCT sin la l�
 captura de pantalla también en panorámica y ATM, doble clic para ampliar un corte de ATM y curva de la
 arcada apagada por defecto (v0.7.7), marca de agua «DICOM viewer» según el tema, grosor de la panorámica
 sobre el axial al editar, aviso de vía aérea que se cierra, doble clic en panorámica → 2×2 y axial de ATM
-a la altura de la cabeza del cóndilo (v0.7.8).
+a la altura de la cabeza del cóndilo (v0.7.8), dominio propio tresddicom.com (v0.7.9), contador
+GoatCounter (v0.7.10), valoración con estrellas + comentario enviada a un Google Form (v0.7.11), 2×2 tras
+segmentar/foto, curva panorámica DIBUJADA a mano, letra pequeña por defecto y Cruz desactivada fuera de los
+cortes (v0.7.12), cruz sin cuadrados ni círculos grandes en equipos con pantalla táctil y sin el
+recuadro duplicado de importar (v0.7.13).
 100% en el navegador: los DICOM y las fotos nunca salen del ordenador del usuario.
 **Uso previsto declarado (MDR/RGPD): NO es producto sanitario con marcado CE ni sirve para diagnosticar.**
 No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medidas y alineación son «orientativas».
@@ -44,7 +48,7 @@ No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medida
   `node tests/orient.mjs`, `node tests/meshes.mjs`, `node tests/align.mjs`, `node tests/legal.mjs`,
   `node tests/photo.mjs`, `node tests/align_node.mjs` (Node, dientes reales), `node tests/geom.mjs` (guarda de
   geometría), `node tests/wrap.mjs` (bloque de cortes fuera de sitio), `node tests/real.mjs`,
-  `node tests/features.mjs` (v0.7), `node tests/v071.mjs`, `node tests/v072.mjs`, `node tests/v073.mjs`, `node tests/v074.mjs`, `node tests/v075.mjs`, `node tests/v076.mjs`, `node tests/v077.mjs` y `node tests/v078.mjs` hasta 0 errores.
+  `node tests/features.mjs` (v0.7), `node tests/v071.mjs`, `node tests/v072.mjs`, `node tests/v073.mjs`, `node tests/v074.mjs`, `node tests/v075.mjs`, `node tests/v076.mjs`, `node tests/v077.mjs`, `node tests/v078.mjs`, `node tests/v0711.mjs`, `node tests/v0712.mjs` y `node tests/v0713.mjs` hasta 0 errores.
 - Solo visualización: NO añadir diagnóstico automático ni IA sin pedirlo. Citar licencias de los motores.
 
 ## Arquitectura (ver CONTEXTO.md para el detalle)

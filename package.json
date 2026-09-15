@@ -1,6 +1,6 @@
 {
   "name": "tresd-dicom",
-  "version": "0.7.10",
+  "version": "0.7.13",
   "private": true,
   "type": "module",
   "scripts": {

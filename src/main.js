@@ -4,6 +4,7 @@ import './app.css';
 import { loadLang, setLang, getLang, t, applyI18n } from './i18n/i18n.js';
 import { buildLayout, orientationLetters, meshCard } from './ui/layout.js';
 import { buildMetadata, renderTable, exportJSON, exportCSV, download } from './ui/metadata.js';
+import { openFeedback, scheduleFeedback, feedbackState } from './ui/feedback.js';
 import { collectFromDataTransfer, collectFromFileList, expandZips, scanDicom, fmtDate } from './core/dicomLoad.js';
 import { isMeshName, guessRole, readMesh } from './core/meshes.js';
 import { GUIDED_POINTS } from './core/drape.js';
@@ -16,7 +17,8 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const THEME_KEY = 'tresd_dicom_theme';
 const PANELS_KEY = 'tresd_dicom_panels';    // {left:'pinned'|'auto', right:'pinned'|'auto'}
 const FONT_KEY = 'tresd_dicom_font';        // factor --fs
-const FONT_SIZES = [['font_s', 0.88], ['font_m', 1], ['font_l', 1.15], ['font_xl', 1.32]];
+const FONT_SIZES = [['font_xs', 0.78], ['font_s', 0.88], ['font_m', 1], ['font_l', 1.15], ['font_xl', 1.32]];
+const FONT_DEFAULT = 0.88;                    // «Pequeña» por defecto (petición de Manuel, v0.7.12)
 
 let seriesList = [];
 let current = null;                 // serie cargada
@@ -24,6 +26,7 @@ let layout = 'quad';
 let maximized = null;
 let rotTimer = null;
 let busy = false;
+const fbBusy = () => busy || !!(manualPick || pointAlign || airwayPick || tmjPick || panDraw || V.state.measureMode);
 
 // ------------------------------------------------------------------ arranque
 async function main() {
@@ -122,7 +125,7 @@ function togglePanel(side) {
   next[side] = panels[side] === 'auto' ? 'pinned' : 'auto';
   applyPanels(next);
 }
-function loadFontScale() { try { const v = parseFloat(localStorage.getItem(FONT_KEY)); return Number.isFinite(v) ? v : 1; } catch (e) { return 1; } }
+function loadFontScale() { try { const v = parseFloat(localStorage.getItem(FONT_KEY)); return Number.isFinite(v) ? v : FONT_DEFAULT; } catch (e) { return FONT_DEFAULT; } }
 function applyFontScale(f) {
   document.documentElement.style.setProperty('--fs', String(f));
   try { localStorage.setItem(FONT_KEY, String(f)); } catch (e) { /* nada */ }
@@ -160,7 +163,6 @@ function setHasCase() {
   for (const sel of ['#patient-chip', '#btn-meta', '#vispanel .card.dicom', '#mpr-card', '#btn-cross']) $(sel).classList.toggle('hidden', !vol);
   $('#grid').classList.toggle('hidden', !has);
   $('#main-drop').classList.toggle('hidden', has);
-  $('#side-drop').classList.toggle('hidden', has);
   $$('#view-bar [data-layout]').forEach((b) => { b.disabled = !vol && b.dataset.layout !== 'vp3d'; });
   $$('.vpmax').forEach((b) => { b.disabled = !vol; });
   // botones de subida: el del CBCT se oculta con un CBCT cargado; el de escáner, con las dos arcadas
@@ -518,6 +520,7 @@ async function openSeries(s) {
   if (s.rotTail) setStatus(t('st_geo_block', { n: s.rotTail }));
   $('#lbl-import').textContent = (s.desc || s.modality) + ' · ' + s.count + ' ' + t('slices');
   countEvent('cbct');
+  scheduleFeedback(fbBusy);           // valoración del software, pasados unos minutos de uso (v0.7.11)
   // escáneres ya cargados: alinearlos a las coronas del nuevo CBCT (un representante por oclusión)
   if (V.getMeshes().some((m) => m.oriented)) {
     const loaded = $('#status-text').textContent;
@@ -628,6 +631,7 @@ async function runSegmentation() {
   if (so) setCardOpacity(so.id, 0.8);      // la piel, al 80 % por defecto (se ve el hueso a través)
   const fine = sk && sk.fine ? t('st_seg_fine', { f: (sk.fine.f * Math.min(...V.state.volume.spacing)).toFixed(2) }) : '';
   setStatus(t('st_seg_done', { b: sk ? sk.nTri.toLocaleString() : 0, s: so ? so.nTri.toLocaleString() : 0, tb: Math.round(res.thresholds.bone), ts: Math.round(res.thresholds.soft), fine }));
+  applyLayout('quad');                 // petición de Manuel (v0.7.12): al segmentar, volver al 2×2
   countEvent('segmentacion');
   return !!so;
 }
@@ -678,6 +682,7 @@ function finishDrape(res) {
   $('#dicom-vis').checked = false; V.setVolumeVisible(false);
   setHasCase();
   setStatus(t('st_photo_done', { e: res.err.toFixed(1), n: res.n, m: res.manual ? t('st_photo_manual_tag') : '' }));
+  applyLayout('quad');                 // petición de Manuel (v0.7.12): al subir la foto, volver al 2×2
   countEvent('foto');
 }
 
@@ -862,6 +867,7 @@ let airwayPick = null;    // { marks: [[x,y,z]…], prevLayout }
 
 function startAirway() {
   if (!current || busy || airwayPick) return;
+  if (panDraw) cancelPanDraw(true);
   if (manualPick) cancelManual();
   if (pointAlign) cancelPointAlign(true);
   if (V.state.measureMode) setMeasureMode(null);
@@ -924,11 +930,77 @@ async function airwayPicked(canvasPos) {
   busy = false;
 }
 
+// ------------------------------------------------------------------ dibujar la curva panorámica a mano (v0.7.12)
+let panDraw = null;       // { pts: [[x,y,z]…], prevLayout }
+
+function startPanDraw() {
+  if (!current || busy || panDraw) return;
+  if (manualPick) cancelManual();
+  if (pointAlign) cancelPointAlign(true);
+  if (airwayPick) cancelAirway(true);
+  if (tmjPick) cancelTmj(true);
+  if (V.state.measureMode) setMeasureMode(null);
+  if (panEdit) setPanoEdit(false);
+  panDraw = { pts: [], prevLayout: layout };
+  applyLayout('vpAx', false);
+  // a la altura de los dientes si ya hay curva; si no, donde esté el axial (el usuario lo mueve con la rueda)
+  const z = V.state.pano && V.state.pano.curve ? V.state.pano.curve.z : null;
+  if (Number.isFinite(z)) V.jumpViewportSticky(V.VP.ax, 2, z);
+  $('#grid').classList.add('measuring');
+  $('#pd-bar').classList.remove('hidden');
+  V.suppressSilhouettes(true);
+  promptPanDraw();
+  setStatus(t('st_pan_draw'));
+}
+function promptPanDraw() {
+  const p = panDraw; if (!p) return;
+  $('#pd-text').textContent = t('pd_text', { n: p.pts.length });
+  $('#pd-done').disabled = p.pts.length < 3;
+  V.setPanoDrawPoints(p.pts);
+}
+function pdRestore() {
+  const p = panDraw; if (!p) return;
+  V.setPanoDrawPoints(null);
+  $('#grid').classList.remove('measuring');
+  $('#pd-bar').classList.add('hidden');
+  V.suppressSilhouettes(false);
+}
+function cancelPanDraw(silent = false) {
+  if (!panDraw) { $('#pd-bar').classList.add('hidden'); return; }
+  const prev = panDraw.prevLayout; pdRestore(); panDraw = null;
+  applyLayout(prev || 'quad');
+  if (!silent) setStatus(t('st_pan_draw_cancel'));
+}
+function undoPanDraw() { const p = panDraw; if (!p) return; p.pts.pop(); promptPanDraw(); }
+function panDrawPicked(canvasPos) {
+  const p = panDraw; if (!p) return;
+  const w = V.pickOnMpr(V.VP.ax, canvasPos); if (!w) return;
+  p.pts.push(w); promptPanDraw();
+}
+async function finishPanDraw() {
+  const p = panDraw; if (!p) return;
+  if (p.pts.length < 3) { setStatus(t('st_pan_draw_few')); return; }
+  // la panorámica va de la DERECHA del paciente (−X) a la izquierda: si se dibujó al revés, se invierte
+  const pts = p.pts.slice(); if (pts[0][0] > pts[pts.length - 1][0]) pts.reverse();
+  const z = pts.reduce((a, q) => a + q[2], 0) / pts.length;
+  const curve = V.curveFromPoints(pts, z);
+  pdRestore(); panDraw = null;
+  if (!curve) { setStatus(t('st_pan_draw_few')); applyLayout('quad'); return; }
+  const prev = V.getPanoControl();
+  applyLayout('vpPan', true);
+  await showPanoramic({ curve, silent: true });
+  const next = V.getPanoControl();
+  if (prev && next) V.history.record({ label: 'pan_curve', undo: () => { V.setPanoControl(prev); showPanoramic({ silent: true }); }, redo: () => { V.setPanoControl(next); showPanoramic({ silent: true }); } });
+  refreshHistoryButtons();
+  setStatus(t('st_pan_draw_done', { n: pts.length }));
+}
+
 // ------------------------------------------------------------------ cortes de ATM (2 clics, uno por cóndilo)
 let tmjPick = null;      // { seeds: {R, L}, order: ['R','L'], prevLayout }
 
 function startTmj() {
   if (!current || busy || tmjPick) return;
+  if (panDraw) cancelPanDraw(true);
   if (manualPick) cancelManual();
   if (pointAlign) cancelPointAlign(true);
   if (airwayPick) cancelAirway(true);
@@ -1010,13 +1082,15 @@ function atmCellAspect() {
   const h = grid ? (grid.clientHeight - 3 * 4) / 4 : 0;
   return w > 20 && h > 20 ? w / h : 1.35;
 }
-function fitTmjAspect() {
+function fitTmjAspect(retry = 0) {
   if (!V.state.tmj) return;
   const grid = $('#atm-grid'); if (!grid) return;
   const cell = $('#atm-grid .atm-cell:not(.atm-gap)');
   const w = cell ? cell.getBoundingClientRect().width : 0;
+  // justo tras cambiar de disposición la casilla puede medir aún 0: se reintenta unos fotogramas (v0.7.12)
+  if (w <= 20) { if (retry < 10) requestAnimationFrame(() => fitTmjAspect(retry + 1)); return; }
   const a = V.clampAspect(atmCellAspect());
-  if (w > 20) grid.style.gridAutoRows = (w / a).toFixed(1) + 'px';
+  grid.style.gridAutoRows = (w / a).toFixed(1) + 'px';
   if (V.setTmjAspect(a)) redrawTmj();
 }
 
@@ -1483,6 +1557,7 @@ function applyLayout(name, remember = true) {
   else if (name === 'panEdit') { grid.dataset.layout = 'pair'; visible = ['vpAx', 'vpPan']; }   // editar la curva
   else { grid.dataset.layout = 'single'; visible = [name]; }
   for (const id of [...all, 'vpPan', 'vpAtm']) grid.querySelector(`.vp[data-id="${id}"]`).classList.toggle('hidden', !visible.includes(id));
+  $('#btn-cross').disabled = ['vp3d', 'vpPan', 'panEdit', 'vpAtm'].includes(name);    // sin cortes MPR no hay cruz (v0.7.12)
   $$('[data-layout]').forEach((b) => { if (b.tagName === 'BUTTON') b.classList.toggle('on', b.dataset.layout === (name === 'panEdit' ? 'vpPan' : name)); });
   requestAnimationFrame(() => V.resize());
   if (name === 'vpPan' || name === 'panEdit') { if (V.state.pano) drawPan(); else showPanoramic(); }   // ya calculada: solo repintar
@@ -1606,8 +1681,9 @@ function setMeasureMode(mode) {
 
 // ------------------------------------------------------------------ eventos
 function wireUI() {
-  // arrastrar y soltar (los dos recuadros y toda la ventana)
-  for (const el of [$('#main-drop'), $('#side-drop'), document.body]) {
+  // arrastrar y soltar (el recuadro central y toda la ventana; el del panel izquierdo se quitó en v0.7.13
+  // por repetido)
+  for (const el of [$('#main-drop'), document.body]) {
     el.addEventListener('dragover', (e) => { e.preventDefault(); if (el.classList.contains('drop')) el.classList.add('over'); });
     el.addEventListener('dragleave', () => el.classList.remove('over'));
     el.addEventListener('drop', async (e) => {
@@ -1617,7 +1693,6 @@ function wireUI() {
     });
   }
   $('#main-drop').addEventListener('click', () => $('#in-folder').click());
-  $('#side-drop').addEventListener('click', () => $('#in-folder').click());
   $('#btn-folder').addEventListener('click', () => $('#in-folder').click());
   $('#btn-files').addEventListener('click', () => $('#in-files').click());
   $('#btn-zip').addEventListener('click', () => $('#in-zip').click());
@@ -1651,6 +1726,20 @@ function wireUI() {
     const r = $('#vpSag').getBoundingClientRect();
     airwayPicked([e.clientX - r.left, e.clientY - r.top]);
   });
+  // dibujar la curva panorámica: clics (sin arrastre) sobre el corte axial
+  $('#pan-draw').addEventListener('click', () => startPanDraw());
+  let adown = null;
+  $('#vpAx').addEventListener('pointerdown', (e) => { if (e.button === 0) adown = [e.clientX, e.clientY]; });
+  $('#vpAx').addEventListener('pointerup', (e) => {
+    if (!panDraw || e.button !== 0 || !adown) return;
+    const moved = Math.hypot(e.clientX - adown[0], e.clientY - adown[1]); adown = null;
+    if (moved > 4) return;
+    const r = $('#vpAx').getBoundingClientRect();
+    panDrawPicked([e.clientX - r.left, e.clientY - r.top]);
+  });
+  $('#pd-undo').addEventListener('click', (e) => { e.stopPropagation(); undoPanDraw(); });
+  $('#pd-done').addEventListener('click', (e) => { e.stopPropagation(); finishPanDraw(); });
+  $('#pd-cancel').addEventListener('click', (e) => { e.stopPropagation(); cancelPanDraw(); });
   $('#aw-undo').addEventListener('click', (e) => { e.stopPropagation(); undoAirway(); });
   $('#aw-cancel').addEventListener('click', (e) => { e.stopPropagation(); cancelAirway(); });
   $('#atm-undo').addEventListener('click', (e) => { e.stopPropagation(); undoTmj(); });
@@ -1734,7 +1823,7 @@ function wireUI() {
     refreshHistoryButtons();
     setStatus(t('st_atm_meas_clear'));
   });
-  for (const ev of ['pointerdown', 'pointerup', 'mousedown', 'click']) { $('#aw-bar').addEventListener(ev, (e) => e.stopPropagation()); $('#atm-bar').addEventListener(ev, (e) => e.stopPropagation()); }
+  for (const ev of ['pointerdown', 'pointerup', 'mousedown', 'click']) { $('#aw-bar').addEventListener(ev, (e) => e.stopPropagation()); $('#atm-bar').addEventListener(ev, (e) => e.stopPropagation()); $('#pd-bar').addEventListener(ev, (e) => e.stopPropagation()); }
   // deshacer / rehacer
   $('#btn-undo').addEventListener('click', () => doUndo());
   $('#btn-redo').addEventListener('click', () => doRedo());
@@ -1847,7 +1936,7 @@ function wireUI() {
   // vistas y disposición
   $$('#view-bar [data-view]').forEach((b) => b.addEventListener('click', () => V.setView(b.dataset.view)));
   $('#btn-center').addEventListener('click', () => V.centerAll());
-  $$('#view-bar [data-layout]').forEach((b) => b.addEventListener('click', () => { if (panEdit && b.dataset.layout !== 'vpPan') setPanoEdit(false); applyLayout(b.dataset.layout); }));
+  $$('#view-bar [data-layout]').forEach((b) => b.addEventListener('click', () => { if (panDraw) cancelPanDraw(true); if (panEdit && b.dataset.layout !== 'vpPan') setPanoEdit(false); applyLayout(b.dataset.layout); }));
   $$('.vpmax').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); toggleMaximize(b.dataset.max); }));
   $$('.vp .vplabel').forEach((l) => l.parentElement.addEventListener('dblclick', (e) => {
     if (e.target.closest('.cs') && !V.state.measureMode) toggleMaximize(l.parentElement.dataset.id);
@@ -1858,7 +1947,8 @@ function wireUI() {
   $('#btn-font').addEventListener('click', (e) => fontMenu(e.currentTarget));
   $$('.pin').forEach((b) => b.addEventListener('click', () => togglePanel(b.dataset.pin)));
   $('#btn-lang').addEventListener('click', () => { setLang(getLang() === 'es' ? 'en' : 'es'); afterLangChange(); });
-  $$('.legal-links a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); showLegal(a.dataset.legal, { onLang: afterLangChange }); }));
+  $$('.legal-links a[data-legal]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); showLegal(a.dataset.legal, { onLang: afterLangChange }); }));
+  $('#btn-feedback').addEventListener('click', (e) => { e.preventDefault(); openFeedback(); });
   $('#btn-help').addEventListener('click', () => alert(t('help_text') + '\n\n' + t('about', { v: VERSION })));
   $('#btn-shot').addEventListener('click', () => {
     const url = shotPng();
@@ -1898,6 +1988,7 @@ function wireUI() {
     if (pointAlign) cancelPointAlign(true);
     if (airwayPick) cancelAirway(true);
     if (tmjPick) cancelTmj(true);
+    if (panDraw) cancelPanDraw(true);
     V.clearTmj(); renderTmj();
     if (panEdit) setPanoEdit(false);
     $('#btn-cross').setAttribute('aria-pressed', 'false');
@@ -1928,7 +2019,7 @@ function wireUI() {
 
   // teclado: Escape cancela la medición / cierra metadatos; Ctrl+Z / Ctrl+Y (o Ctrl+Mayús+Z) deshacen / rehacen
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { if (V.state.measureMode) setMeasureMode(null); if (manualPick) { cancelManual(); setStatus(t('st_ready')); } if (pointAlign) cancelPointAlign(); if (airwayPick) cancelAirway(); if (tmjPick) cancelTmj(); $('#meta-drawer').classList.remove('open'); }
+    if (e.key === 'Escape') { if (V.state.measureMode) setMeasureMode(null); if (manualPick) { cancelManual(); setStatus(t('st_ready')); } if (pointAlign) cancelPointAlign(); if (airwayPick) cancelAirway(); if (tmjPick) cancelTmj(); if (panDraw) cancelPanDraw(); $('#meta-drawer').classList.remove('open'); }
     const tag = (e.target && e.target.tagName) || '';
     if ((e.ctrlKey || e.metaKey) && !/INPUT|TEXTAREA|SELECT/.test(tag)) {
       const k = e.key.toLowerCase();
@@ -1954,5 +2045,5 @@ function countEvent(name) {
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-window.tresd = { V, renderTmj, redrawTmj, showPanoramic, fitTmjAspect, openAtmBig, openPolesDialog, shotPng };   // acceso desde la consola del navegador (depuración)
+window.tresd = { V, renderTmj, redrawTmj, showPanoramic, fitTmjAspect, openAtmBig, openPolesDialog, shotPng, openFeedback, feedbackState };   // acceso desde la consola del navegador (depuración)
 main();

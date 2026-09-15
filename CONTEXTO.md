@@ -619,11 +619,67 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   desplazamiento va en `pole.axiBase`; el rótulo y la rueda cuentan desde ahí (`it.base`), y se recalcula
   al ajustar los polos a mano. `tests/_dbg_axi.mjs` vuelca la pila de axiales para verlo a ojo.
 
+## 2u. v0.7.11 (15-09-2026) — valoración del software (estrellas + comentario) → Google Form
+- `src/ui/feedback.js`: ventana con 5 estrellas y comentario opcional. Se envía por `fetch` `no-cors` a
+  `FORM_URL` (Google Form de Manuel, id `1FAIpQLSdY7E8mRQufhXrfffJW4c2STN-wKmuXapj8yVS2C5TPDCJxZg`):
+  `entry.1125802240` = estrellas, `entry.1984945003` = comentario. Las respuestas le llegan por correo
+  (aviso activado en el formulario) y a una hoja de cálculo. Si Manuel rehace el formulario, cambian los
+  `entry.*`: se sacan de `FB_PUBLIC_LOAD_DATA_` en la página del formulario (ver `tests/v0711.mjs`).
+- Cuándo: NO «al cerrar la pestaña» (imposible en navegadores). Sale sola UNA vez, 5 min después de cargar
+  un caso (`scheduleFeedback` desde `openSeries`), salvo que haya otra ventana abierta o el usuario esté
+  marcando puntos (`fbBusy`), en cuyo caso reintenta al minuto. «Ahora no» → 30 días. Enviada → nunca más.
+  Estado en localStorage `tresd_dicom_feedback` (`done` | `later:<ms>`). Botón fijo «★ Valorar» en el pie.
+  `window.__tresdFbDelay` acorta la espera SOLO en las pruebas.
+- Privacidad: punto 5 nuevo («Valoración voluntaria», Google Forms, consentimiento art. 6.1.a, sin datos
+  personales); los siguientes se renumeran. TERMS_VERSION no cambia (no se piden nuevas aceptaciones).
+
+## 2v. v0.7.12 (15-09-2026) — 2×2 tras segmentar/foto, «Dibujar curva», letra pequeña, Cruz desactivada
+- **Tras segmentar o drapear la foto** se vuelve al 2×2 (`applyLayout('quad')` al final de
+  `runSegmentation` y `finishDrape`).
+- **«✏ Dibujar curva»** (botón en la barra de la panorámica): modo `panDraw` en `main.js`, calcado del
+  marcado de la vía aérea: solo el axial (a la altura de los dientes si ya hay curva), barra `#pd-bar`
+  dentro del visor axial (texto con el número de puntos, Deshacer, Terminar, Cancelar), clics sin arrastre
+  → `pickOnMpr`. Los puntos se pintan con un `extra` de las siluetas (`state.panDraw`). Al terminar:
+  si el primer punto está más a la IZQUIERDA del paciente que el último se invierte el orden (la
+  panorámica va de derecha a izquierda), z = media de los puntos, `viewer.curveFromPoints` → `buildPano({
+  curve })` (opción nueva: usa esa curva en vez de detectarla) y se registra en deshacer. Mínimo 3 puntos;
+  Esc / cambiar de disposición / otro modo cancelan.
+- **Letra**: por defecto «Pequeña» (0,88) y opción nueva «Muy pequeña» (0,78). Quien ya tuviera un tamaño
+  guardado lo conserva.
+- **Botón Cruz** desactivado (`disabled`) en Render 3D, Panorámica (y edición) y ATM: `applyLayout`.
+- Punto 5 de la petición (quitar «cuadrados de traslación» de la cruz) quedó pendiente de captura: en las
+  pruebas no había cuadrados. Resuelto en v0.7.13 → ver §2w.
+- `fitTmjAspect` reintenta unos fotogramas si la casilla mide 0 (recién cambiada la disposición). Y en las
+  pruebas, con mallas segmentadas el `resize` del render 3D tarda > 1 s en SwiftShader: `tests/v073.mjs`
+  espera a que cambie `gridAutoRows` en vez de un tiempo fijo.
+
+## 2w. v0.7.13 (15-09-2026) — Cruz sin cuadrados en pantallas táctiles, sin recuadro duplicado de importar
+- **Cruz**: la captura de Manuel mostraba círculos GRANDES y CUADRADOS en cada línea, siempre a la vista.
+  Causa: `CrosshairsTool` enciende solo su modo «móvil» (`mobile.enabled = isMobile()`) cuando el navegador
+  cumple `matchMedia('(any-pointer:coarse)')`, es decir, cuando el equipo tiene una pantalla táctil (o un
+  puntero grueso cualquiera), aunque se use con ratón. En ese modo IGNORA `handleRadius` y
+  `getReferenceLineSlabThicknessControlsOn`: círculos de radio 9, cuadrados de grosor de corte y todo pintado
+  sin esperar al ratón. En las pruebas (SwiftShader, sin táctil) nunca salía; se reproduce en Playwright con
+  `hasTouch: true`. Arreglo en `viewer.js`: `mobile: { enabled: false }` en la configuración de la cruz
+  (BaseTool hace `deepMerge`, así que basta con esa clave). De paso, círculos de giro algo más visibles que
+  los 1,4 px de antes (`handleRadius` 3,5; `tuneCrosshairs`: `clamp(minDim/130, 2,5, 4)`), que Manuel nunca
+  había visto porque su PC iba en modo móvil. El agarre no depende del radio (proximidad fija de 6 px).
+- **Recuadro «Arrastra aquí tu CBCT» del panel izquierdo** (`#side-drop`) eliminado: repetía el central.
+  Quitados el HTML (`layout.js`), su `hidden` en `setHasCase`, sus oyentes de arrastre y clic (`wireUI`), la
+  clave `drop_small` (es/en) y la regla `#side .drop`. Sigue funcionando el arrastre sobre el recuadro
+  central y sobre toda la ventana.
+- Prueba: `tests/v0713.mjs` (con `hasTouch: true`): sin cuadrados, 0 mangos sin ratón encima, 2 círculos de
+  2,5–4 px al pasar por la línea, sin `#side-drop`. OJO: en SwiftShader la cruz tarda varios segundos en
+  pintarse tras el clic; esperar a que haya `line` en `#svg-layer-vpAx` antes de contar (un tiempo fijo
+  daba 0 líneas).
+
 ## 3. TRAMPAS descubiertas (no volver a caer)
 - **Al copiar una barra de aviso (#aw-bar → #atm-bar) revisar TODOS los selectores del flujo original**:
   un `#atm-bar` en `awRestore` dejó el aviso de la vía aérea colgado durante tres versiones sin que ninguna
   prueba lo viera (comprobaban las siluetas, no la barra). Toda barra de aviso debe tener una prueba de
   «se oculta al terminar».
+- **Toda ventana automática (valoración) rompe las pruebas** si salta a mitad: cada `addInitScript` de
+  las pruebas pone `tresd_dicom_feedback = 'done'`. Al añadir una prueba nueva, copiar esa línea.
 - **`preventDefault()` en `pointerdown` mata el `click` y el `dblclick`** de ese elemento (se cancelan los
   eventos de ratón de compatibilidad). Si hace falta arrastrar Y detectar dobles clics, hay que contarlos a
   mano con el tiempo entre pulsaciones.
@@ -660,6 +716,9 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   imageId afectados (nada de llamar a `metaData.get` dentro del proveedor: se realimenta).
 - **`wadouri.fileManager.add` devuelve un imageId NUEVO cada vez** aunque sea el mismo fichero.
 - **`CrosshairsTool` en modo `minimal` desactiva el giro**: `viewportDraggableRotatable = !minimal.enabled`.
+- **`CrosshairsTool` se pone solo en modo «móvil» en equipos con pantalla táctil** (`any-pointer: coarse`) y
+  entonces ignora `handleRadius` y los controles de grosor: círculos de 9 px y cuadrados siempre visibles.
+  Lo que no sale en SwiftShader puede salir en el PC de Manuel: probar también con `hasTouch: true`.
 - **Cornerstone vuelve a estrechar el rango de recorte de la cámara 3D** después de `resetCamera` y al añadir
   actores: hay que repasarlo también tras el pintado, no solo al cambiar la cámara.
 - Un `setStatus` lanzado por una tarea ASÍNCRONA (la panorámica se recalcula al volver a su disposición)

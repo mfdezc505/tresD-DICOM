@@ -71,6 +71,7 @@ export const state = {
   crosshairs: false,            // cruz de referencia en los MPR (CrosshairsTool)
   pano: null,                   // panorámica { curve, image, thickness, mip }
   showArch: false,              // dibujar la curva de la arcada sobre el axial (apagada por defecto, v0.7.7)
+  panDraw: null,                // puntos que el usuario está marcando para dibujar la curva panorámica (v0.7.12)
   panoEdit: false,              // editando la curva de la panorámica (puntos de control sobre el axial)
   awMarks: null,                // marcas [sup, inf] (mundo) mientras se marca la vía aérea en el sagital
   tmj: null,                    // cortes de ATM { poles: {R, L}, series: {R: [...], L: [...]}, win }
@@ -139,20 +140,25 @@ export async function initViewer(els) {
   tgm.addTool(csTools.LengthTool.toolName);
   tgm.addTool(csTools.AngleTool.toolName);
   // Cruz de referencia (colores por corte: axial rojo, coronal verde, sagital azul, como 3D Slicer).
-  //  - `handleRadius` 2 (antes 3): mangos más discretos.
+  //  - `handleRadius` 3,5 (Cornerstone trae 3; el modo móvil 9): mangos discretos, solo al pasar el ratón.
   //  - los CUADRADOS son el grosor de corte (slab thickness), que este visor no ofrece: se apagan. Eran los
   //    que se montaban encima de los círculos de giro.
   //  - `referenceLinesCenterGapRadius` 26: hueco central algo mayor, para ver el punto exacto del cruce.
   // (El círculo de giro lo coloca Cornerstone en el punto MEDIO del tramo visible de cada media línea, así
   // que se separa del centro según dónde esté la cruz dentro del visor; no es configurable.)
+  //  - `mobile.enabled: false` (v0.7.13): Cornerstone enciende solo su modo «móvil» si el equipo declara un
+  //    puntero grueso (`any-pointer: coarse`: pantalla táctil, portátil con táctil...). En ese modo ignora
+  //    todo lo anterior: círculos de radio 9, CUADRADOS de grosor siempre a la vista y sin esperar al ratón.
+  //    Es lo que veía Manuel en su PC. Se apaga siempre: este visor se maneja con ratón.
   tgm.addTool(csTools.CrosshairsTool.toolName, {
     getReferenceLineColor: (id) => ({ [VP.ax]: '#E5484D', [VP.cor]: '#30A46C', [VP.sag]: '#3E63DD' }[id] || '#FFFFFF'),
     getReferenceLineControllable: () => true,
     getReferenceLineDraggableRotatable: () => true,
     getReferenceLineSlabThicknessControlsOn: () => false,
-    handleRadius: 1.4,
+    handleRadius: 3.5,            // círculos de giro: menos de la mitad de los 9 del modo móvil; los ajusta tuneCrosshairs
     enableHDPIHandles: false,
     referenceLinesCenterGapRadius: 26,
+    mobile: { enabled: false },
   });
   tgm.setToolActive(csTools.StackScrollTool.toolName, { bindings: [{ mouseButton: MouseBindings.Wheel }] });
   tgm.setToolActive(csTools.WindowLevelTool.toolName, { bindings: [{ mouseButton: MouseBindings.Primary }] });
@@ -215,6 +221,16 @@ export async function initViewer(els) {
         g.beginPath(); g.arc(q[0], q[1], 5, 0, 2 * Math.PI); g.fillStyle = '#FDE047'; g.fill(); g.stroke();
       }
     }
+    g.restore();
+  });
+  // puntos de la curva panorámica que el usuario está DIBUJANDO sobre el axial (v0.7.12)
+  silhouettes.extra.push((id, g, vp, axis) => {
+    if (id !== VP.ax || axis !== 2 || !state.panDraw) return;
+    const q = state.panDraw.map((w) => vp.worldToCanvas(w));
+    g.save(); g.globalAlpha = 1;
+    if (q.length > 1) { g.setLineDash([5, 4]); g.lineWidth = 1.5; g.strokeStyle = '#FDE047'; g.beginPath(); q.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.stroke(); }
+    g.setLineDash([]); g.lineWidth = 2; g.strokeStyle = '#0B0F1A'; g.font = 'bold 11px Poppins, sans-serif';
+    q.forEach((p, i) => { g.beginPath(); g.arc(p[0], p[1], 5, 0, 2 * Math.PI); g.fillStyle = '#FDE047'; g.fill(); g.stroke(); g.fillStyle = '#FDE047'; g.fillText(String(i + 1), p[0] + 8, p[1] - 6); });
     g.restore();
   });
   // marcas de los CÓNDILOS (mientras se señalan) y polos de la ATM, sobre cualquier corte
@@ -1346,7 +1362,7 @@ function tuneCrosshairs() {
     minDim = Math.min(minDim, el.clientWidth, el.clientHeight);
   }
   if (!Number.isFinite(minDim) || minDim < 20) return;
-  const r = Math.max(0.8, Math.min(1.6, minDim / 320));            // círculos de giro: discretos
+  const r = Math.max(2.5, Math.min(4, minDim / 130));              // círculos de giro: visibles pero discretos (v0.7.13)
   const gap = Math.max(8, Math.min(26, Math.round(minDim * 0.055)));
   const cur = tg.getToolConfiguration(csTools.CrosshairsTool.toolName) || {};
   if (Math.abs((cur.handleRadius || 0) - r) < 0.05 && cur.referenceLinesCenterGapRadius === gap) return;
@@ -1579,7 +1595,8 @@ export function setAirwayHeat(id, on) {
 export async function buildPano(opts = {}, onStatus) {
   if (!state.volume) return null;
   let curve = state.pano && state.pano.curve;
-  if (!curve || opts.recompute) {
+  if (opts.curve) curve = opts.curve;                 // curva DIBUJADA a mano por el usuario (v0.7.12)
+  else if (!curve || opts.recompute) {
     const raw = await getEnamel(onStatus);
     curve = raw && state.teeth ? archCurve(state.teeth) : null;
   }
@@ -1620,6 +1637,10 @@ export function setPanoControl(ctrl) {
   if (curve) { p.curve = curve; silhouettes.redrawAll(); }
   return curve;
 }
+/** Curva de la panorámica a partir de puntos DIBUJADOS por el usuario (mundo, en un corte axial a la altura z). */
+export function curveFromPoints(pts, z) { return curveFrom(pts.map((q) => [q[0], q[1]]), z); }
+/** Puntos que el usuario va marcando para dibujar la curva (se pintan sobre el axial); null los quita. */
+export function setPanoDrawPoints(pts) { state.panDraw = pts && pts.length ? pts : null; silhouettes.redrawAll(); }
 
 export function setArchVisible(on) { state.showArch = !!on; silhouettes.redrawAll(); }
 export function setPanoEdit(on) {

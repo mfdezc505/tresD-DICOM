@@ -32,7 +32,7 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 async function newPage() {
   const page = await browser.newPage({ viewport: { width: 1500, height: 900 }, locale: 'es-ES' });
-  await page.addInitScript(() => { try { localStorage.setItem('tresd_dicom_terms', 'v1-2026-09'); } catch (e) {} });
+  await page.addInitScript(() => { try { localStorage.setItem('tresd_dicom_terms', 'v1-2026-09'); localStorage.setItem('tresd_dicom_feedback', 'done'); } catch (e) {} });
   page.setDefaultTimeout(240000);
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 300)); if (m.text().startsWith('tresD alineación')) console.log('   ', m.text()); });
   page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));

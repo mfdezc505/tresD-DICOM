@@ -3,7 +3,7 @@
 Visor web de CBCT con la interfaz de VOXEL. Todo se procesa **en el navegador**: los archivos DICOM
 nunca salen de tu ordenador.
 
-## Qué hace (v0.7.8)
+## Qué hace (v0.7.13)
 - Abre carpetas DICOM, DICOMDIR y ZIP (arrastrar o botones). Detecta las series y deja elegir. Repara solo
   las series mal escritas: tamaño de vóxel incoherente y **bloques de cortes colocados fuera de sitio** (la
   parte alta del cráneo saliendo suelta por debajo del resto); avisa en la barra de estado cuando lo hace.
@@ -12,11 +12,13 @@ nunca salen de tu ordenador.
   **vía aérea** (hueso translúcido), estándar) + transparencia, brillo y contraste. El hueso se ve OPACO (marfil). Vistas Frontal / Derecha / Izquierda / Superior / Inferior / Posterior.
 - Tres cortes MPR (axial, coronal, sagital): rueda = cambiar de corte, arrastrar = brillo/contraste,
   botón central = mover, botón derecho = zoom. **Cruz de referencia** (botón «✛ Cruz»): arrastra el centro
-  para navegar los tres planos a la vez y gira los brazos para cortes oblicuos (brillo/contraste = Mayús + arrastrar).
+  para navegar los tres planos a la vez y gira los brazos con los circulitos que aparecen al pasar el ratón
+  por una línea (brillo/contraste = Mayús + arrastrar).
 - **Panorámica** (corte curvo a lo largo de la arcada dental, detectada automáticamente): llega **hasta los
   cóndilos** (la curva se prolonga por las ramas y la imagen es más alta), grosor ajustable en vivo, MIP
   activado por defecto, curva dibujada sobre el axial y **editable** («✎ Editar curva»: se arrastran los 13
   puntos amarillos sobre el corte axial (el axial se coloca solo a la altura de los dientes y dos líneas finas marcan el grosor del corte) y la panorámica se rehace; «↺ Curva automática» la recalcula);
+  «✏ Dibujar curva» permite marcar la curva a mano con clics sobre el corte axial (de un cóndilo al otro por los dientes);
   brillo/contraste arrastrando sobre la imagen. **Mayús + arrastrar = medir** (en mm, con la etiqueta
   arrastrable); grosor por defecto 22 mm.
 - **Cortes de ATM**: marcas un punto sobre cada cóndilo y el visor busca la cabeza condilar, calcula su eje
@@ -61,6 +63,7 @@ nunca salen de tu ordenador.
   escáneres, alinear, voltear, transparencia, color, ver/ocultar, segmentación, foto, vía aérea, mediciones,
   corte, preset, brillo/contraste, siluetas. (Cargar o quitar el DICOM no se deshace.)
 - Contador de visitas anónimo (GoatCounter: sin cookies ni datos personales).
+- **Valoración** (1-5 estrellas + comentario opcional): se pide una vez tras unos minutos de uso y siempre desde «★ Valorar» en el pie. Llega por correo al titular; anónima.
 - Términos de uso (aceptación en la primera visita), aviso legal y política de privacidad (pie de página).
   Uso previsto: visualización y docencia; NO es un producto sanitario con marcado CE ni sirve para diagnosticar.
 - Español / inglés, tema oscuro / claro, tamaño de letra (botón Aa), paneles replegables (⟨ ⟩ / 📌).

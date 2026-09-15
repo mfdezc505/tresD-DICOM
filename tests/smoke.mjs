@@ -27,7 +27,7 @@ const browser = await chromium.launch({
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl', '--no-sandbox'],
 });
 const page = await browser.newPage({ viewport: { width: 1500, height: 900 }, locale: 'es-ES' });
-await page.addInitScript(() => { try { localStorage.setItem('tresd_dicom_terms', 'v1-2026-09'); } catch (e) {} });
+await page.addInitScript(() => { try { localStorage.setItem('tresd_dicom_terms', 'v1-2026-09'); localStorage.setItem('tresd_dicom_feedback', 'done'); } catch (e) {} });
   page.setDefaultTimeout(180000);
 const logs = [];
 page.on('console', (m) => { const s = `[${m.type()}] ${m.text()}`; logs.push(s); if (m.type() === 'error' || m.type() === 'warning') console.log(s.slice(0, 400)); });

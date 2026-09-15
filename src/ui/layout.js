@@ -51,7 +51,6 @@ export function buildLayout(root) {
     <div class="sidewrap left" id="wrap-left"><div class="hot"></div>
     <aside id="side" class="pane">
       <div class="phead"><h1 class="h1" data-i18n="step_import"></h1><button class="btn-ghost btn-icon pin" data-pin="left" data-i18n-title="pin_btn">⟨</button></div>
-      <div id="side-drop" class="drop"><span data-i18n="drop_small" style="white-space:pre-line"></span></div>
       <div class="group" id="g1">
         <div class="gtitle" data-i18n="g1_title"></div>
         <button id="btn-folder" class="btn-primary" data-i18n="upload_folder"></button>
@@ -114,6 +113,7 @@ export function buildLayout(root) {
             <span class="spacer" style="flex:1"></span>
             <button class="btn-ghost" id="pan-clear" data-i18n="atm_clear"></button>
             <button class="btn-ghost" id="pan-edit" aria-pressed="false" data-i18n="pan_edit" data-i18n-title="pan_edit_tip"></button>
+            <button class="btn-ghost" id="pan-draw" data-i18n="pan_draw" data-i18n-title="pan_draw_tip"></button>
             <button class="btn-ghost" id="pan-reset" data-i18n="pan_reset"></button>
           </div>
           <span class="vplabel" data-i18n="vp_pan"></span>
@@ -172,7 +172,7 @@ export function buildLayout(root) {
   </div>
 
   <footer class="status"><span id="status-text" data-i18n="st_ready"></span><div class="progress hidden" id="progress"><div></div></div>
-    <span class="legal-links"><a href="#" data-legal="terms" data-i18n="legal_terms"></a> · <a href="#" data-legal="notice" data-i18n="legal_notice"></a> · <a href="#" data-legal="privacy" data-i18n="legal_privacy"></a></span></footer>
+    <span class="legal-links"><a href="#" data-legal="terms" data-i18n="legal_terms"></a> · <a href="#" data-legal="notice" data-i18n="legal_notice"></a> · <a href="#" data-legal="privacy" data-i18n="legal_privacy"></a> · <a href="#" id="btn-feedback" data-i18n="fb_btn"></a></span></footer>
 
   <div id="meta-drawer">
     <div class="mhead">
@@ -194,7 +194,8 @@ function vp(id, labelKey) {
   const orient = id === 'vp3d' ? '' : `<span class="orient t"></span><span class="orient b"></span><span class="orient l"></span><span class="orient r"></span>`;
   const bar = id === 'vp3d' ? `<div class="pa-bar hidden" id="pa-bar"><span id="pa-text"></span><button class="btn-ghost" id="pa-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="pa-cancel" data-i18n="dlg_cancel"></button></div>`
     : id === 'vpSag' ? `<div class="pa-bar hidden" id="aw-bar"><span id="aw-text"></span><button class="btn-ghost" id="aw-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="aw-cancel" data-i18n="dlg_cancel"></button></div>`
-      : id === 'vpCor' ? `<div class="pa-bar hidden" id="atm-bar"><span id="atm-text"></span><button class="btn-ghost" id="atm-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="atm-cancel" data-i18n="dlg_cancel"></button></div>` : '';
+      : id === 'vpCor' ? `<div class="pa-bar hidden" id="atm-bar"><span id="atm-text"></span><button class="btn-ghost" id="atm-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="atm-cancel" data-i18n="dlg_cancel"></button></div>`
+        : id === 'vpAx' ? `<div class="pa-bar hidden" id="pd-bar"><span id="pd-text"></span><button class="btn-ghost" id="pd-undo" data-i18n="dlg_undo"></button><button class="btn-primary" id="pd-done" data-i18n="pd_done" style="width:auto;min-height:28px;padding:2px 12px"></button><button class="btn-ghost" id="pd-cancel" data-i18n="dlg_cancel"></button></div>` : '';
   return `<div class="vp" data-id="${id}">
     <div class="cs" id="${id}" oncontextmenu="return false"></div>${bar}
     <span class="vplabel" data-i18n="${labelKey}"></span>
