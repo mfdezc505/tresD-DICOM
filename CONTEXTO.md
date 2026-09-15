@@ -10,6 +10,16 @@
   ver 2d/2e). Fase 3 = segmentación rápida + UNA foto frontal drapeada sobre la piel (HECHA en v0.5.0, ver 2h).
 - **Repositorio** `Desktop\tresD_DICOM`, GitHub `mfdezc505/tresD-DICOM`, web en
   `https://mfdezc505.github.io/tresD-DICOM/` sirviendo la carpeta `docs/` de `main`.
+  **PUBLICADA el 15-09-2026 (v0.7.8)**: hasta entonces el repositorio no existía en GitHub (el `.bat` fallaba
+  sin que se notara); se creó a mano (público, sin README) y se activó Pages (main / docs). Desde ahora,
+  `SUBIR_GITHUB.bat` publica de verdad: cada versión entregada queda en la web al minuto.
+- **Dominio propio `https://tresddicom.com`** (v0.7.9, 15-09-2026): comprado en Hostingenius (12 €/año,
+  renovación 18 €). El DNS vive en el Plesk del hosting de `ortodonciatresd.com` (alias de dominio
+  `tresddicom.com` con zona DNS PROPIA, sin correo ni web): 4 registros A a las IP de GitHub Pages
+  (185.199.108-111.153) y `www` CNAME → `mfdezc505.github.io`. El fichero `public/CNAME` (→ `docs/CNAME`)
+  dice `tresddicom.com`; si se borra, GitHub Pages pierde el dominio. En GitHub → Settings → Pages →
+  Custom domain = `tresddicom.com` + «Enforce HTTPS». La dirección `mfdezc505.github.io/tresD-DICOM/`
+  redirige a la nueva. `OWNER.site` (aviso legal) apunta ya al dominio propio.
 - **Idioma ES + EN** con selector (botón ES/EN arriba a la derecha), persistido en localStorage.
 - **Manuel no instala Node**: Claude construye `docs/` en la nube y lo escribe en su PC.
 

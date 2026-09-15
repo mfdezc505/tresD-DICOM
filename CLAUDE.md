@@ -30,7 +30,8 @@ No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medida
   LEEN para portar ideas. Al terminar, `git status` en ambos debe seguir limpio.
 - Trabajar SOLO en esta carpeta (`Desktop\tresD_DICOM`), con su propio git.
 - **Manuel NO tiene Node.js**: la web se construye en la nube (Claude ejecuta `npm run build`) y se
-  escribe la carpeta `docs/` ya construida en su PC. GitHub Pages sirve `docs/` de la rama `main`.
+  escribe la carpeta `docs/` ya construida en su PC. GitHub Pages sirve `docs/` de la rama `main` en
+  **https://tresddicom.com** (dominio propio; `public/CNAME` NO se borra).
   Para probar en local: `ABRIR_tresD_DICOM.bat` (servidor Python del venv de VOXEL + navegador).
 - **Versión en DOS sitios**: `package.json` ("version") y `src/version.js` (VERSION). Subirla en ambos.
 - Regla 1 de Manuel: antes de cambiar código, buscar TODOS los sitios que afectan al comportamiento

@@ -17,7 +17,7 @@ const OWNER = {
   address: 'Clínica Áncora, Av. Sor Teresa Prat 57 bajo, Málaga (España)',
   addressEn: 'Clínica Áncora, Av. Sor Teresa Prat 57 bajo, Málaga (Spain)',
   email: 'tresdortodoncia@gmail.com',
-  site: 'https://mfdezc505.github.io/tresD-DICOM/',
+  site: 'https://tresddicom.com/',
 };
 
 const ES = {
