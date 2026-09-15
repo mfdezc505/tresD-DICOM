@@ -60,7 +60,7 @@ const cfg = await ev(() => {
   const tool = T.ToolGroupManager.getToolGroup('tg-mpr').getToolInstance(T.CrosshairsTool.toolName);
   return { r: tool.configuration.handleRadius, gap: tool.configuration.referenceLinesCenterGapRadius, slab: tool._getReferenceLineSlabThicknessControlsOn('vpAx') };
 });
-check(cfg.r === 1.4, `radio de los mangos ${cfg.r} px (2 en v0.7.1, 3 de fábrica)`);
+check(cfg.r > 0.5 && cfg.r <= 1.7, `radio de los mangos ${cfg.r.toFixed(2)} px (desde v0.7.4 se adapta al visor; 3 de fábrica)`);
 check(cfg.slab === false, 'cuadrados de grosor de corte desactivados');
 // en el SVG del corte coronal solo debe haber círculos de giro, ningún rectángulo de mango
 await page.mouse.move(400, 400); await sleep(400);
@@ -140,7 +140,8 @@ await page.click('#pan-edit'); await sleep(1200);
 // ---------------------------------------------------------------- 5) cortes de ATM
 console.log('— cortes de ATM');
 await page.click('#btn-atm'); await sleep(1200);
-check(!(await page.locator('#aw-bar').evaluate((e) => e.classList.contains('hidden'))) && /ATM 1\/2/.test(await page.textContent('#aw-text')), 'pide marcar el cóndilo derecho');
+// desde v0.7.5 el aviso de la ATM tiene su propia barra sobre el corte coronal (#atm-bar)
+check(!(await page.locator('#atm-bar').evaluate((e) => e.classList.contains('hidden'))) && /ATM 1\/2/.test(await page.textContent('#atm-text')), 'pide marcar el cóndilo derecho');
 const SEEDS = [[-54, -24, 43], [50, -29, 45]];    // cóndilos del CBCT DZ (medidos sobre el volumen)
 const corBox = await page.locator('#vpCor').boundingBox();
 for (const w of SEEDS) {

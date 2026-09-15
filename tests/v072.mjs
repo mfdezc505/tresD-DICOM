@@ -73,7 +73,8 @@ await page.waitForFunction(() => window.tresd.V.state.tmj, null, { timeout: 3000
 await ev(() => window.tresd.renderTmj());
 await page.click('#lay-atm');
 await sleep(800);
-const offs0 = await ev(() => window.tresd.V.state.tmj.series.R.map((x) => `${x.family}:${x.off}`));
+// desde v0.7.8 el axial arranca a la altura de la cabeza (base propia): se mira el desplazamiento respecto a la base
+const offs0 = await ev(() => window.tresd.V.state.tmj.series.R.map((x) => `${x.family}:${x.family === 'axi' ? x.off - (x.base || 0) : x.off}`));
 check(offs0.join(' ') === 'sag:-2 sag:-1 sag:0 sag:1 sag:2 cor:0 axi:0', `sagitales cada 1 mm (${offs0.join(' ')})`);
 const labels = await ev(() => [...document.querySelectorAll('#atm-grid .atm-cell:not(.atm-gap) span')].slice(0, 5).map((s) => s.textContent));
 check(/1 mm/.test(labels.join(' ')) && /centro/.test(labels.join(' ')), `rótulos con el desplazamiento (${labels.join(' · ')})`);
@@ -82,7 +83,7 @@ console.log('— rueda del ratón sobre los cortes');
 const cellBox = await page.locator('#atm-grid .atm-cell:not(.atm-gap)').first().boundingBox();
 await page.mouse.move(cellBox.x + cellBox.width / 2, cellBox.y + cellBox.height / 2);
 for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, 120); await sleep(120); }
-const offs1 = await ev(() => window.tresd.V.state.tmj.series.R.map((x) => `${x.family}:${x.off}`));
+const offs1 = await ev(() => window.tresd.V.state.tmj.series.R.map((x) => `${x.family}:${x.family === 'axi' ? x.off - (x.base || 0) : x.off}`));
 check(offs1.join(' ') === 'sag:1 sag:2 sag:3 sag:4 sag:5 cor:0 axi:0', `la rueda mueve los 5 sagitales 1 mm por muesca (${offs1.join(' ')})`);
 const sameL = await ev(() => window.tresd.V.state.tmj.series.L.every((x) => x.off === (x.base || 0)));
 check(sameL, 'el otro lado no se mueve');
@@ -90,7 +91,7 @@ check(sameL, 'el otro lado no se mueve');
 const corBox = await page.locator('#atm-grid .atm-cell[data-key="cor"]').first().boundingBox();
 await page.mouse.move(corBox.x + corBox.width / 2, corBox.y + corBox.height / 2);
 await page.mouse.wheel(0, -120); await sleep(200);
-const offs2 = await ev(() => window.tresd.V.state.tmj.series.R.map((x) => `${x.family}:${x.off}`));
+const offs2 = await ev(() => window.tresd.V.state.tmj.series.R.map((x) => `${x.family}:${x.family === 'axi' ? x.off - (x.base || 0) : x.off}`));
 check(offs2.join(' ') === 'sag:1 sag:2 sag:3 sag:4 sag:5 cor:-1 axi:0', `la rueda sobre el coronal solo mueve el coronal (${offs2.join(' ')})`);
 // y la imagen cambia de verdad
 const changed = await ev(() => {
@@ -106,11 +107,14 @@ check(changed, 'el corte se recalcula de verdad al desplazarse');
 await shot('v072_atm.png');
 
 console.log('— medidas sobre los cortes de ATM');
+// desde v0.7.5 se mide con MAYÚSCULAS + arrastrar (el arrastre normal es brillo/contraste)
 const mBox = await page.locator('#atm-grid .atm-cell[data-key="sag0"]').first().boundingBox();
+await page.keyboard.down('Shift');
 await page.mouse.move(mBox.x + mBox.width * 0.35, mBox.y + mBox.height * 0.35);
 await page.mouse.down();
 await page.mouse.move(mBox.x + mBox.width * 0.65, mBox.y + mBox.height * 0.65, { steps: 8 });
 await page.mouse.up();
+await page.keyboard.up('Shift');
 await sleep(400);
 const meas = await ev(() => { const m = window.tresd.V.getAllTmjMeas(); const k = Object.keys(m)[0]; return { k, n: k ? m[k].length : 0, st: document.querySelector('#status-text').textContent }; });
 check(meas.n === 1, `una medida guardada en ${meas.k}`);

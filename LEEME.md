@@ -3,7 +3,7 @@
 Visor web de CBCT con la interfaz de VOXEL. Todo se procesa **en el navegador**: los archivos DICOM
 nunca salen de tu ordenador.
 
-## Qué hace (v0.7.3)
+## Qué hace (v0.7.8)
 - Abre carpetas DICOM, DICOMDIR y ZIP (arrastrar o botones). Detecta las series y deja elegir. Repara solo
   las series mal escritas: tamaño de vóxel incoherente y **bloques de cortes colocados fuera de sitio** (la
   parte alta del cráneo saliendo suelta por debajo del resto); avisa en la barra de estado cuando lo hace.
@@ -16,14 +16,21 @@ nunca salen de tu ordenador.
 - **Panorámica** (corte curvo a lo largo de la arcada dental, detectada automáticamente): llega **hasta los
   cóndilos** (la curva se prolonga por las ramas y la imagen es más alta), grosor ajustable en vivo, MIP
   activado por defecto, curva dibujada sobre el axial y **editable** («✎ Editar curva»: se arrastran los 13
-  puntos amarillos sobre el corte axial (el axial se coloca solo a la altura de los dientes) y la panorámica se rehace; «↺ Curva automática» la recalcula);
-  brillo/contraste arrastrando sobre la imagen.
+  puntos amarillos sobre el corte axial (el axial se coloca solo a la altura de los dientes y dos líneas finas marcan el grosor del corte) y la panorámica se rehace; «↺ Curva automática» la recalcula);
+  brillo/contraste arrastrando sobre la imagen. **Mayús + arrastrar = medir** (en mm, con la etiqueta
+  arrastrable); grosor por defecto 22 mm.
 - **Cortes de ATM**: marcas un punto sobre cada cóndilo y el visor busca la cabeza condilar, calcula su eje
   entre polos y saca, por lado, 5 cortes sagitales perpendiculares a ese eje **a 1 mm** (de medial a lateral),
-  1 coronal y 1 axial, en un mosaico (como el panel de ATM de VOXEL). La **rueda del ratón** recorre los
+  1 coronal y 1 axial (este a la altura de la cabeza del cóndilo, ya separada de la fosa), en un mosaico (como el panel de ATM de VOXEL). La **rueda del ratón** recorre los
   cortes de milímetro en milímetro (sobre un sagital mueve los cinco; sobre el coronal o el axial, solo ese).
   **Arrastrar = medir** (distancia en mm, con su color y deshacer/rehacer; «⌫ Borrar medidas» las quita);
-  brillo/contraste con **Mayús + arrastrar**. Los cortes se encuadran solos a la casilla del mosaico.
+  brillo/contraste con **Mayús + arrastrar**. Los cortes se encuadran solos a la casilla del mosaico. Cada
+  corte se puede **ver en grande** (doble clic sobre él o botón ⤢ de la casilla) y medir ahí con más precisión.
+  Si los polos del cóndilo no quedan bien, **«⌖ Ajustar polos»** los coloca a mano sobre un corte axial y
+  rehace los cortes perpendiculares al nuevo eje (medial y lateral salen bien también en los CBCT cuyo
+  origen no está en la línea media). Al marcar los cóndilos, el corte coronal se coloca solo a su altura
+  (la rueda lo ajusta). Rótulos y medidas se dibujan a la resolución de la pantalla: se leen nítidos también
+  en el corte ampliado.
 - **Exportar mallas a STL**: botón ⭳ del panel derecho (o botón derecho sobre ese panel) → se eligen las
   mallas y se descarga un STL por cada una, en la posición que tienen en pantalla.
 - Multipantalla: 2×2, 3D + cortes, en fila, o cada visor solo (botón ⤢ o doble clic).
@@ -31,7 +38,7 @@ nunca salen de tu ordenador.
   color y trazado en vivo mientras mueves el ratón.
 - Corte del volumen por plano sagital / axial / coronal, con «voltear lado».
 - Planos MPR dentro del render 3D (panel derecho).
-- Metadatos DICOM completos con búsqueda y exportación JSON / CSV. Captura PNG. Rotación automática.
+- Metadatos DICOM completos con búsqueda y exportación JSON / CSV. Captura PNG con el logotipo «DICOM viewer» como marca de agua, en la versión del tema activo (también de la panorámica y del mosaico de ATM). Doble clic sobre la panorámica vuelve al 2×2. Rotación automática.
 - **Escáneres intraorales** (STL / PLY / OBJ), solos o junto al CBCT: se orientan automáticamente al marco
   del paciente (como el paso 1 de tresD Models) y, con CBCT, se **alinean solos sobre los dientes** (superficie
   dental por HU, multiarranque + ICP punto-a-plano, como VOXEL) con error y cobertura en la barra de estado; la arcada
@@ -41,7 +48,8 @@ nunca salen de tu ordenador.
   (ver/ocultar, transparencia, color, voltear, alinear al CBCT, alinear por puntos); corte y medición también
   sobre las mallas; **siluetas** de las mallas sobre los cortes MPR (desactivables).
 - **Segmentación rápida** del CBCT (cráneo + piel por umbral automático, con la dentición a resolución fina
-  para ver las coronas; la piel al 80 % de opacidad) y **foto frontal drapeada** sobre la
+  para ver las coronas; la piel al 80 % de opacidad). La piel es la superficie EXTERNA: ya no lleva dentro
+  la vía aérea ni los senos y **foto frontal drapeada** sobre la
   piel 3D: detección facial automática (MediaPipe, en el navegador) o 7 puntos marcados a mano si el CBCT no
   incluye los ojos.
 - **Vía aérea faríngea** como en VOXEL: dos clics en el corte sagital (límite superior a la altura del paladar /

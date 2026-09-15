@@ -90,14 +90,29 @@ export function samplePlane(smp, plane) {
       data[row + i] = smp.value([o[0] + x[0] * px + y[0] * py, o[1] + x[1] * px + y[1] * py, o[2] + x[2] * px + y[2] * py]);
     }
   }
-  return { data, w, h, step };
+  // se devuelve también el MARCO del plano (origen y ejes del píxel) para poder ir de píxel a mundo:
+  // hace falta para medir en mm y para arrastrar los polos sobre el corte axial.
+  const oy = flip ? addS(o, y, 2 * hh - step) : o;
+  return { data, w, h, step, o: oy, ex: x, ey: flip ? [-y[0], -y[1], -y[2]] : y };
+}
+
+/** Punto del MUNDO bajo un píxel (col, fila) de un corte remuestreado. */
+export function planeToWorld(img, col, row) {
+  return [img.o[0] + img.ex[0] * col * img.step + img.ey[0] * row * img.step,
+    img.o[1] + img.ex[1] * col * img.step + img.ey[1] * row * img.step,
+    img.o[2] + img.ex[2] * col * img.step + img.ey[2] * row * img.step];
+}
+/** Píxel (col, fila) de un corte donde cae un punto del MUNDO. */
+export function worldToPlane(img, w) {
+  const d = sub(w, img.o);
+  return [dot(d, img.ex) / img.step, dot(d, img.ey) / img.step];
 }
 
 /**
  * Refina la marca del usuario hasta la cabeza del cóndilo y devuelve sus polos.
  * seed = [x,y,z] mundo (clic), thr = umbral de hueso. Devuelve { med, lat, center, ml, ap, si, n } | null.
  */
-export function refineCondyle(smp, seed, thr) {
+export function refineCondyle(smp, seed, thr, midX = 0) {
   const R = 13;                                   // radio de búsqueda alrededor del clic (mm)
   const pts = [];
   const st = 0.7;                                 // paso de barrido (mm)
@@ -146,12 +161,27 @@ export function refineCondyle(smp, seed, thr) {
   const mean = (list) => { const s = [0, 0, 0]; for (const i of list) { s[0] += use[i][0]; s[1] += use[i][1]; s[2] += use[i][2]; } return s.map((v) => v / list.length); };
   const k = Math.max(1, Math.min(3, order.length));
   const pA = mean(order.slice(0, k)), pB = mean(order.slice(-k));
-  // MEDIAL = el polo más cerca de la línea media (x = 0); LATERAL = el otro
-  const [med, lat] = Math.abs(pA[0]) <= Math.abs(pB[0]) ? [pA, pB] : [pB, pA];
+  // MEDIAL = el polo más cerca de la LÍNEA MEDIA del paciente; LATERAL = el otro
+  const [med, lat] = Math.abs(pA[0] - midX) <= Math.abs(pB[0] - midX) ? [pA, pB] : [pB, pA];
+  return polesFrom(med, lat, use.length, apex, midX);
+}
+
+/**
+ * Marco del cóndilo a partir de sus dos POLOS (medial y lateral, mundo). Se usa tanto al detectarlo
+ * automáticamente como cuando el usuario los mueve a mano sobre el corte axial.
+ */
+export function polesFrom(med, lat, n = 0, apex = null, midX = 0) {
+  // MEDIAL = el más cercano a la LÍNEA MEDIA del paciente. Si vienen al revés se intercambian: así los
+  // rótulos del diálogo de polos nunca salen cambiados (v0.7.5).
+  // OJO (v0.7.6): la línea media NO es x = 0. Muchos CBCT tienen el origen en una esquina, así que el
+  // volumen cae entero en x > 0 y comparar |x| invertía los polos del lado derecho. `midX` viene del
+  // punto medio entre los dos cóndilos marcados (o del centro del volumen).
+  if (Math.abs(med[0] - midX) > Math.abs(lat[0] - midX)) { const q = med; med = lat; lat = q; }
   const center = [(med[0] + lat[0]) / 2, (med[1] + lat[1]) / 2, (med[2] + lat[2]) / 2];
-  ml = norm([lat[0] - med[0], lat[1] - med[1], 0]);      // horizontal (plano axial), de medial a lateral
+  let ml = norm([lat[0] - med[0], lat[1] - med[1], 0]);   // horizontal (plano axial), de medial a lateral
+  if (!Number.isFinite(ml[0])) ml = LEFT;
   const ap = norm(cross(SI, ml));
-  return { med, lat, center, ml, ap, si: SI, n: use.length, apex };
+  return { med: med.slice(), lat: lat.slice(), center, ml, ap, si: SI, n, apex };
 }
 
 /**
@@ -165,8 +195,59 @@ export function condyleSeries(smp, pole, step = 0.2, shift = { sag: 0, cor: 0, a
     out.push({ key: 'sag' + s, family: 'sag', base: s, off, img: condyleSlice(smp, pole, 'sag', off, step, aspect) });
   }
   out.push({ key: 'cor', family: 'cor', base: 0, off: shift.cor || 0, img: condyleSlice(smp, pole, 'cor', shift.cor || 0, step, aspect) });
-  out.push({ key: 'axi', family: 'axi', base: 0, off: shift.axi || 0, img: condyleSlice(smp, pole, 'axi', shift.axi || 0, step, aspect) });
+  const ab = pole.axiBase || 0;
+  out.push({ key: 'axi', family: 'axi', base: ab, off: ab + (shift.axi || 0), img: condyleSlice(smp, pole, 'axi', ab + (shift.axi || 0), step, aspect) });
   return out;
+}
+
+/**
+ * Altura del corte AXIAL por defecto (mm respecto al centro de los polos, negativo = hacia abajo). El
+ * centro de los polos cae en lo alto de la cabeza, donde el corte axial sale con la cabeza PEGADA a la
+ * fosa y al temporal y no se distingue el cóndilo (había que buscarlo con la rueda, v0.7.8). Se busca,
+ * de 1 mm por encima a 15 por debajo, el nivel en que el cóndilo sale como una MANCHA AISLADA de hueso
+ * (un componente que no toca el borde de la ventana de 36 mm, con el centro a menos de 7 mm del centro
+ * de los polos) y más grande: es la sección más ancha de la cabeza, ya separada de la fosa.
+ */
+export function bestAxialOffset(smp, pole, thr) {
+  const half = 18, st = 0.5;
+  let best = null;
+  for (let off = 1; off >= -15; off -= 1) {
+    const img = samplePlane(smp, { c: addS(pole.center, SI, off), normal: SI, ux: LEFT, up: ANT, half: [half, half], step: st });
+    const s = isolatedBlob(img, thr, 7 / st);
+    if (s > 0 && (!best || s > best.s)) best = { off, s };
+  }
+  return best ? best.off : -5;
+}
+
+/**
+ * Tamaño (área de su caja, px²) del mayor componente 4-conexo de hueso que NO toca el borde y cuyo centroide
+ * cae a menos de `rad` px del centro; 0 si no hay. Se mide la CAJA y no el área: la cabeza es un anillo
+ * cortical con el interior esponjoso por debajo del umbral, y por área ganaba el cuello (macizo y más abajo).
+ */
+function isolatedBlob(img, thr, rad) {
+  const { w, h, data } = img;
+  const lab = new Int32Array(w * h);
+  const qx = new Int32Array(w * h);
+  let best = 0, next = 0;
+  for (let s0 = 0; s0 < w * h; s0++) {
+    if (lab[s0] || data[s0] < thr) continue;
+    next++;
+    let head = 0, tail = 0, area = 0, sx = 0, sy = 0, border = false, x0 = w, x1 = 0, y0 = h, y1 = 0;
+    qx[tail++] = s0; lab[s0] = next;
+    while (head < tail) {
+      const i = qx[head++], x = i % w, y = (i - x) / w;
+      area++; sx += x; sy += y;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) border = true;
+      const nb = [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1];
+      for (const j of nb) if (j >= 0 && !lab[j] && data[j] >= thr) { lab[j] = next; qx[tail++] = j; }
+    }
+    if (border) continue;
+    const dc = Math.hypot(sx / area - w / 2, sy / area - h / 2);
+    const box = (x1 - x0 + 1) * (y1 - y0 + 1);
+    if (dc <= rad && box > best) best = box;
+  }
+  return best;
 }
 
 /** Un solo corte del cóndilo: family = 'sag' (⊥ al eje medio-lateral) | 'cor' | 'axi'; off en mm. */
@@ -182,15 +263,32 @@ export function condyleSlice(smp, pole, family, off, step = 0.2, aspect = 1.35) 
 export function tmjSampler(volume, getSlice) { return sampler(volume, getSlice); }
 
 /** Pinta un corte en un canvas con la ventana { lower, upper }. */
-export function drawSlice(canvas, img, win) {
-  canvas.width = img.w; canvas.height = img.h;
-  const g = canvas.getContext('2d');
-  const im = g.createImageData(img.w, img.h);
+export function drawSlice(canvas, img, win, zoom = 1) {
+  paintGray(canvas, img.w, img.h, img.data, win, zoom);
+}
+
+/**
+ * Pinta un mapa de grises en un canvas con un factor de RESOLUCIÓN `zoom` (píxeles de canvas por píxel
+ * de la imagen). Con zoom > 1 el canvas tiene más píxeles que la imagen: los rótulos y las medidas que se
+ * dibujen encima salen NÍTIDOS en vez de ampliarse con la imagen (v0.7.6). El factor queda en
+ * `canvas._imgZoom` para que quien dibuje encima convierta sus coordenadas.
+ */
+export function paintGray(canvas, w, h, src, win, zoom = 1) {
+  const z = Math.max(1, Math.min(8, zoom || 1));
   const lo = win.lower, rng = Math.max(1, win.upper - win.lower);
-  const d = im.data, src = img.data;
+  const im = new ImageData(w, h);
+  const d = im.data;
   for (let i = 0; i < src.length; i++) {
     const v = Math.max(0, Math.min(255, Math.round(((src[i] - lo) / rng) * 255)));
     d[4 * i] = v; d[4 * i + 1] = v; d[4 * i + 2] = v; d[4 * i + 3] = 255;
   }
-  g.putImageData(im, 0, 0);
+  canvas._imgZoom = z;
+  if (z === 1) { canvas.width = w; canvas.height = h; canvas.getContext('2d').putImageData(im, 0, 0); return; }
+  const off = paintGray.off || (paintGray.off = document.createElement('canvas'));
+  off.width = w; off.height = h;
+  off.getContext('2d').putImageData(im, 0, 0);
+  canvas.width = Math.round(w * z); canvas.height = Math.round(h * z);
+  const g = canvas.getContext('2d');
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.drawImage(off, 0, 0, canvas.width, canvas.height);
 }

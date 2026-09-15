@@ -29,6 +29,10 @@ export class Silhouettes {
       el.addEventListener(Enums.Events.IMAGE_RENDERED, cb);
       el.addEventListener(Enums.Events.CAMERA_MODIFIED, cb);
       el.addEventListener(Enums.Events.VOLUME_NEW_IMAGE, cb);
+      // el canvas de siluetas se dimensiona con el visor: si el visor cambia de tamaño (otra disposición,
+      // panel replegado, ventana) y Cornerstone no vuelve a renderizar, el canvas se quedaba del tamaño
+      // anterior (a veces 0 × 0, con el visor oculto) y las siluetas no se veían (v0.7.6)
+      try { const ro = new ResizeObserver(cb); ro.observe(el); } catch (e) { /* navegador antiguo */ }
     }
   }
 

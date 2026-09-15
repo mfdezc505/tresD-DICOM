@@ -57,6 +57,7 @@ async function main() {
   if (!hasWebGL()) setStatus(t('st_webgl'));
   wireUI();
   let atmFit = 0;
+  watermark();                       // precarga del logotipo para la marca de agua
   window.addEventListener('resize', () => {
     V.resize();
     clearTimeout(atmFit);
@@ -473,6 +474,15 @@ function fillAirwayValues(card, item) {
   box.classList.toggle('hidden', !item.visible);
 }
 /** Edad del paciente (años) a partir de nacimiento y fecha del estudio del DICOM, o null. */
+// marca de agua de las capturas: el logotipo principal «DICOM viewer» (decisión de Manuel), en la versión
+// del TEMA activo: la de tema oscuro es clara y no se veía sobre las capturas de fondo claro (v0.7.8).
+// Se cargan una vez y se reutilizan.
+const wmImgs = {};
+function watermark() {
+  for (const k of ['dark', 'light']) if (!wmImgs[k]) { wmImgs[k] = new Image(); wmImgs[k].src = `./img/logo_main_${k}.png`; }
+  return wmImgs[document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'];
+}
+
 function patientAge() {
   if (!current || !current.birth) return null;
   const p = (s) => { const m = String(s).match(/^(\d{4})(\d{2})(\d{2})/); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
@@ -515,7 +525,10 @@ async function openSeries(s) {
     setStatus(loaded + ' · ' + res.map((r) => r.item.name + ': ' + alignText(r.align)).join(' · '));
   }
   // chip de paciente (barra superior, como VOXEL)
-  const chip = [s.patient, s.sex ? s.sex : '', fmtDate(s.birth), s.date ? fmtDate(s.date) : ''].filter(Boolean).join(' · ');
+  // fecha de nacimiento con la EDAD a la fecha del estudio, detrás del sexo (v0.7.5)
+  const yrs = patientAge();
+  const nac = s.birth ? fmtDate(s.birth) + (yrs != null && yrs > 0 && yrs < 120 ? ` (${t('age_years', { n: Math.floor(yrs) })})` : '') : '';
+  const chip = [s.patient, s.sex ? s.sex : '', nac, s.date ? fmtDate(s.date) : ''].filter(Boolean).join(' · ');
   $('#patient-chip').textContent = chip || (s.desc || '');
   // sincronizar controles del panel derecho con el estado del render
   syncRenderControls();
@@ -869,12 +882,12 @@ function awRestore(restoreLayout = true) {
   const aw = airwayPick; if (!aw) return;
   V.setAirwayMarks(null);
   $('#grid').classList.remove('measuring');
-  $('#aw-bar').classList.add('hidden');
+  $('#aw-bar').classList.add('hidden');       // (v0.7.5–v0.7.7 ocultaba #atm-bar por error: el aviso se quedaba puesto tras segmentar)
   V.suppressSilhouettes(false);
   if (restoreLayout) applyLayout(aw.prevLayout || 'quad');
 }
 function cancelAirway(silent = false) {
-  if (!airwayPick) return;
+  if (!airwayPick) { $('#aw-bar').classList.add('hidden'); return; }
   awRestore(); airwayPick = null;
   if (!silent) setStatus(t('st_aw_cancel'));
 }
@@ -921,23 +934,30 @@ function startTmj() {
   if (airwayPick) cancelAirway(true);
   if (V.state.measureMode) setMeasureMode(null);
   tmjPick = { seeds: {}, order: ['R', 'L'], prevLayout: layout };
-  applyLayout('quad', false);
+  // corte CORONAL solo, a la altura estimada de los cóndilos: es donde mejor se ven los dos a la vez
+  applyLayout('vpCor', false);
+  // el salto se REPITE hasta que se queda puesto: al cambiar de disposición Cornerstone recolocaba la
+  // cámara en el centro del volumen después y el coronal se quedaba lejos de los cóndilos (v0.7.6)
+  const g = V.condyleGuess();
+  if (g) V.jumpViewportSticky(V.VP.cor, 1, g[1]);
   $('#grid').classList.add('measuring');
-  $('#aw-bar').classList.remove('hidden');
+  $('#atm-bar').classList.remove('hidden');
+  V.suppressSilhouettes(true);        // las siluetas de las mallas estorban para ver los cóndilos
   promptTmj();
   setStatus(t('st_atm_start'));
 }
 function promptTmj() {
   const p = tmjPick; if (!p) return;
   const next = p.order.find((s) => !p.seeds[s]);
-  $('#aw-text').textContent = t(next === 'R' ? 'atm_r' : 'atm_l');
+  $('#atm-text').textContent = t(next === 'R' ? 'atm_r' : 'atm_l');
   V.setTmjMarks(p.order.filter((s) => p.seeds[s]).map((s) => p.seeds[s]));
 }
 function tmjRestore(restoreLayout = true) {
   const p = tmjPick; if (!p) return;
   V.setTmjMarks(null);
   $('#grid').classList.remove('measuring');
-  $('#aw-bar').classList.add('hidden');
+  $('#atm-bar').classList.add('hidden');
+  V.suppressSilhouettes(false);
   if (restoreLayout) applyLayout(p.prevLayout || 'quad');
 }
 function cancelTmj(silent = false) {
@@ -1007,7 +1027,8 @@ function atmLabel(it) {
     return t(it.off < 0 ? 'atm_sag_m' : 'atm_sag_l', { o: Math.abs(it.off) });
   }
   const base = t(it.family === 'cor' ? 'atm_cor' : 'atm_axi');
-  return it.off ? `${base} ${it.off > 0 ? '+' : '-'}${Math.abs(it.off)} mm` : base;
+  const d = it.off - (it.base || 0);                    // respecto a la altura por defecto (el axial arranca en la cabeza)
+  return d ? `${base} ${d > 0 ? '+' : '-'}${Math.abs(d)} mm` : base;
 }
 
 /** Mosaico de cortes de ATM: por lado, una fila con los 5 sagitales y otra con el coronal y el axial. */
@@ -1022,6 +1043,9 @@ function renderTmj() {
     d.dataset.side = it.side; d.dataset.key = it.key; d.dataset.family = it.family;
     d.appendChild(document.createElement('canvas'));
     d.appendChild(document.createElement('span'));
+    const big = document.createElement('button');
+    big.className = 'btn-ghost atm-zoom'; big.textContent = '⤢'; big.title = t('atm_big_tip');
+    d.appendChild(big);
     return d;
   };
   for (const sd of ['R', 'L']) {
@@ -1037,48 +1061,114 @@ function renderTmj() {
   redrawTmj();
 }
 
-/** Repinta los cortes de ATM con la ventana y las medidas actuales (sin recalcular la geometría). */
-function redrawTmj() {
+/** Repinta los cortes de ATM. Con `only` (un .atm-cell) repinta SOLO ese: arrastrar era lento con los 14. */
+function redrawTmj(only) {
   const tmj = V.state.tmj; if (!tmj) return;
   const win = V.getTmjWindow();
-  for (const cell of $$('#atm-grid .atm-cell:not(.atm-gap)')) {
+  for (const cell of (only ? [only] : $$('#atm-grid .atm-cell:not(.atm-gap)'))) {
     const serie = tmj.series[cell.dataset.side]; if (!serie) continue;
     const it = serie.find((x) => x.key === cell.dataset.key);
     if (!it) continue;
     const cv = cell.querySelector('canvas');
-    V.drawTmjSlice(cv, it.img, win);
-    cell.querySelector('span').textContent = atmLabel(it);
+    V.drawTmjSlice(cv, it.img, win, drawZoom(cv, it.img.w, it.img.h));
+    const lbl = cell.querySelector('span'); if (lbl) lbl.textContent = atmLabel(it);
     drawTmjMeas(cv, it, cell.dataset.side);
   }
+  if (!only && atmBig) drawAtmBig();
 }
 
-// ------------------------------------------------------------------ medidas sobre los cortes de ATM
-let atmDrag = null;         // { cell, it, side, a:[px,py], b:[px,py] } mientras se arrastra
+// ------------------------------------------------------------------ medidas sobre cortes (ATM y panorámica)
+// Desde v0.7.5: se mide con MAYÚSCULAS + arrastrar (el arrastre normal sigue siendo brillo/contraste), el
+// cursor de cruz solo aparece con Mayús pulsado, la etiqueta del valor se arrastra y va en tamaño FIJO de
+// pantalla (antes se escalaba con el canvas y salían enormes y solapadas).
+let atmDrag = null;         // { cell, it, side, cv, a:[px,px], b, lab } mientras se arrastra
+let atmMeasN = 0;
+let shiftDown = false;
 
-/** Pinta las medidas guardadas de un corte (y la que se está arrastrando) sobre su propio canvas. */
+/**
+ * Factor de RESOLUCIÓN con el que pintar un corte: píxeles de canvas por píxel de la imagen. Se pinta a los
+ * píxeles REALES de pantalla (nunca por debajo de 1) para que los rótulos y las medidas que van encima
+ * salgan nítidos; antes se dibujaban en píxeles del corte y la pantalla los ampliaba (borrosos, v0.7.6).
+ */
+function drawZoom(cv, w, h) {
+  const r = cv.getBoundingClientRect();
+  if (!r.width || !r.height || !w || !h) return 2;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  return Math.max(1, Math.min(6, Math.min(r.width / w, r.height / h) * dpr));
+}
+
+/** Escala canvas→pantalla de un canvas pintado con object-fit: contain (px de canvas por píxel de pantalla). */
+function canvasScale(cv) {
+  const r = cv.getBoundingClientRect();
+  if (!r.width || !cv.width) return 1;
+  return cv.width / Math.min(r.width, (cv.width / cv.height) * r.height);
+}
+
+/** Punto medio + desplazamiento de la etiqueta de una medida (en píxeles del corte). */
+function measLabelPos(m) {
+  const k = m.lab || [0, 0];
+  return [(m.a[0] + m.b[0]) / 2 + k[0], (m.a[1] + m.b[1]) / 2 + k[1]];
+}
+
+/**
+ * Pinta una lista de medidas sobre un canvas ya dibujado. `mm` = mm por píxel del corte.
+ * Los tamaños van en píxeles de PANTALLA (se multiplican por la escala del canvas).
+ */
+function drawMeasures(cv, list, mm) {
+  if (!list || !list.length) return;
+  const g = cv.getContext('2d');
+  const k = canvasScale(cv);                    // px de canvas por px de pantalla
+  const z = cv._imgZoom || 1;                   // px de canvas por px del corte
+  const P = (p) => [p[0] * z, p[1] * z];        // del corte al canvas
+  const lw = 1.4 * k, dot = 2.6 * k, fs = 11 * k;
+  g.save();
+  g.font = `600 ${fs.toFixed(1)}px Poppins, sans-serif`;
+  g.textBaseline = 'middle';
+  for (const m of list) {
+    const d = Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1]) * mm;
+    const a = P(m.a), b = P(m.b);
+    g.strokeStyle = m.color; g.fillStyle = m.color; g.lineWidth = lw;
+    g.setLineDash(m.live ? [4 * k, 3 * k] : []);
+    g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+    g.setLineDash([]);
+    for (const p of [a, b]) { g.beginPath(); g.arc(p[0], p[1], dot, 0, 2 * Math.PI); g.fill(); }
+    const [lx, ly] = P(measLabelPos(m));
+    const txt = d.toFixed(1) + ' mm';
+    const wtx = g.measureText(txt).width;
+    // guía fina de la etiqueta a la medida cuando se ha separado
+    if (m.lab && (m.lab[0] || m.lab[1])) {
+      g.globalAlpha = 0.55; g.lineWidth = lw * 0.8;
+      g.beginPath(); g.moveTo((a[0] + b[0]) / 2, (a[1] + b[1]) / 2); g.lineTo(lx, ly); g.stroke();
+      g.globalAlpha = 1;
+    }
+    g.fillStyle = 'rgba(0,0,0,.6)';
+    g.fillRect(lx - 2 * k, ly - fs * 0.72, wtx + 4 * k, fs * 1.44);
+    g.fillStyle = m.color;
+    g.fillText(txt, lx, ly);
+  }
+  g.restore();
+}
+
+/** Medida cuya ETIQUETA cae bajo el punto (px del corte), o null. */
+function measAtLabel(list, cv, p) {
+  if (!list) return null;
+  const g = cv.getContext('2d');
+  const k = canvasScale(cv), fs = 11 * k, z = cv._imgZoom || 1;
+  g.font = `600 ${fs.toFixed(1)}px Poppins, sans-serif`;
+  const q = [p[0] * z, p[1] * z];               // el punto viene en px del corte; la etiqueta va en px de canvas
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i], mp = measLabelPos(m), lx = mp[0] * z, ly = mp[1] * z;
+    const w = g.measureText('00.0 mm').width;
+    if (q[0] >= lx - 3 * k && q[0] <= lx + w + 3 * k && Math.abs(q[1] - ly) <= fs) return m;
+  }
+  return null;
+}
+
+/** Pinta las medidas guardadas de un corte de ATM (y la que se está arrastrando) sobre su canvas. */
 function drawTmjMeas(cv, it, side) {
   const list = V.getTmjMeas(side, it.family, it.off).slice();
   if (atmDrag && atmDrag.side === side && atmDrag.it.key === it.key && atmDrag.b) list.push({ a: atmDrag.a, b: atmDrag.b, color: atmDrag.color, live: true });
-  if (!list.length) return;
-  const g = cv.getContext('2d');
-  const mm = it.img.step;
-  g.save();
-  g.lineWidth = Math.max(1, cv.width / 220);
-  g.font = `600 ${Math.max(9, Math.round(cv.width / 16))}px Poppins, sans-serif`;
-  for (const m of list) {
-    const d = Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1]) * mm;
-    g.strokeStyle = m.color; g.fillStyle = m.color;
-    g.setLineDash(m.live ? [4, 3] : []);
-    g.beginPath(); g.moveTo(m.a[0], m.a[1]); g.lineTo(m.b[0], m.b[1]); g.stroke();
-    g.setLineDash([]);
-    for (const p of [m.a, m.b]) { g.beginPath(); g.arc(p[0], p[1], g.lineWidth * 1.6, 0, 2 * Math.PI); g.fill(); }
-    const tx = (m.a[0] + m.b[0]) / 2 + 4, ty = (m.a[1] + m.b[1]) / 2 - 4;
-    const txt = d.toFixed(1) + ' mm';
-    g.strokeStyle = 'rgba(0,0,0,.75)'; g.lineWidth = Math.max(2, cv.width / 120);
-    g.strokeText(txt, tx, ty); g.fillText(txt, tx, ty);
-    g.lineWidth = Math.max(1, cv.width / 220);
-  }
-  g.restore();
+  drawMeasures(cv, list, it.img.step);
 }
 
 /** Posición del ratón en PÍXELES DEL CORTE (el canvas se pinta con object-fit: contain). */
@@ -1086,7 +1176,8 @@ function atmPos(cv, ev) {
   const r = cv.getBoundingClientRect();
   const s = Math.min(r.width / cv.width, r.height / cv.height);
   const ox = (r.width - cv.width * s) / 2, oy = (r.height - cv.height * s) / 2;
-  return [(ev.clientX - r.left - ox) / s, (ev.clientY - r.top - oy) / s];
+  const z = cv._imgZoom || 1;
+  return [(ev.clientX - r.left - ox) / s / z, (ev.clientY - r.top - oy) / s / z];
 }
 
 /** Rueda del ratón sobre un corte: desplaza esa familia de cortes de milímetro en milímetro. */
@@ -1098,28 +1189,48 @@ function atmWheel(ev) {
   redrawTmj();
 }
 
+/** Mayús pulsado: cursor de cruz en las zonas donde se puede medir. */
+function setShift(on) {
+  if (shiftDown === on) return;
+  shiftDown = on;
+  document.body.classList.toggle('measuring-shift', on);
+}
+
 function atmDown(ev) {
   const cell = ev.target.closest('.atm-cell:not(.atm-gap)'); if (!cell || !V.state.tmj || ev.button !== 0) return;
   const serie = V.state.tmj.series[cell.dataset.side]; if (!serie) return;
   const it = serie.find((x) => x.key === cell.dataset.key); if (!it) return;
   const cv = cell.querySelector('canvas');
-  atmDrag = { cell, it, side: cell.dataset.side, cv, a: atmPos(cv, ev), b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
-  cv.setPointerCapture(ev.pointerId);
-  ev.preventDefault();
+  const p = atmPos(cv, ev);
+  const side = cell.dataset.side;
+  const lab = measAtLabel(V.getTmjMeas(side, it.family, it.off), cv, p);
+  if (!ev.shiftKey && !lab) return;                 // sin Mayús y fuera de una etiqueta: brillo/contraste
+  atmDrag = lab
+    ? { cell, it, side, cv, mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() }
+    : { cell, it, side, cv, mode: 'new', a: p, b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+  try { cv.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+  ev.preventDefault(); ev.stopPropagation();
 }
 function atmMove(ev) {
   if (!atmDrag) return;
-  atmDrag.b = atmPos(atmDrag.cv, ev);
-  redrawTmj();
+  const p = atmPos(atmDrag.cv, ev);
+  if (atmDrag.mode === 'label') atmDrag.m.lab = [atmDrag.lab0[0] + (p[0] - atmDrag.p0[0]), atmDrag.lab0[1] + (p[1] - atmDrag.p0[1])];
+  else atmDrag.b = p;
+  redrawTmj(atmDrag.cell);                 // solo el corte que se está tocando: así va fluido
 }
-let atmMeasN = 0;
 function atmUp() {
   const d = atmDrag; atmDrag = null;
-  if (!d || !d.b) { redrawTmj(); return; }
+  if (!d) return;
+  if (d.mode === 'label') { redrawTmj(d.cell); return; }
+  if (!d.b) { redrawTmj(d.cell); return; }
   const len = Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * d.it.img.step;
-  if (len < 1) { redrawTmj(); return; }                 // un clic suelto no es una medida
-  const m = { a: d.a, b: d.b, color: d.color };
-  const key = [d.side, d.it.family, d.it.off];
+  if (len < 1) { redrawTmj(d.cell); return; }           // un clic suelto no es una medida
+  addAtmMeas(d.side, d.it, { a: d.a, b: d.b, color: d.color, lab: [0, 0] }, len);
+}
+
+/** Guarda una medida (mosaico o corte ampliado) con deshacer/rehacer y aviso en la barra de estado. */
+function addAtmMeas(side, it, m, len) {
+  const key = [side, it.family, it.off];
   V.addTmjMeas(key[0], key[1], key[2], m);
   atmMeasN++;
   V.history.record({
@@ -1132,8 +1243,170 @@ function atmUp() {
   setStatus(t('st_atm_meas', { v: len.toFixed(1) }));
 }
 
+// ------------------------------------------------------------------ corte de ATM ampliado (modal)
+let atmBig = null;          // { side, key, bg, cv, drag }
+
+/** Abre un corte de ATM a pantalla grande: se mide y se cambia de corte igual que en el mosaico. */
+function openAtmBig(side, key) {
+  if (!V.state.tmj || atmBig) return;
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal atm-big"><div class="atm-big-head"><h3 id="ab-title"></h3>
+      <span class="spacer" style="flex:1"></span><button class="btn-ghost" id="ab-close">${t('dlg_close')}</button></div>
+    <div class="atm-big-wrap"><canvas id="ab-canvas"></canvas></div>
+    <div class="hint" id="ab-hint">${t('atm_big_hint')}</div></div>`;
+  document.body.appendChild(bg);
+  atmBig = { side, key, bg, cv: bg.querySelector('#ab-canvas'), drag: null };
+  const close = () => { bg.remove(); atmBig = null; };
+  bg.querySelector('#ab-close').addEventListener('click', close);
+  bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+  const cv = atmBig.cv;
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const it = atmBigItem(); if (!it) return;
+    if (V.scrollTmj(side, it.family, e.deltaY > 0 ? 1 : -1) === null) return;
+    redrawTmj();
+  }, { passive: false });
+  cv.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const it = atmBigItem(); if (!it) return;
+    const p = atmPos(cv, e);
+    const lab = measAtLabel(V.getTmjMeas(side, it.family, it.off), cv, p);
+    if (!e.shiftKey && !lab) return;               // medir = Mayús + arrastrar; las etiquetas se mueven solas
+    atmBig.drag = lab
+      ? { mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() }
+      : { mode: 'new', a: p, b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
+    e.preventDefault();
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (!atmBig || !atmBig.drag) return;
+    const p = atmPos(cv, e), d = atmBig.drag;
+    if (d.mode === 'label') d.m.lab = [d.lab0[0] + (p[0] - d.p0[0]), d.lab0[1] + (p[1] - d.p0[1])];
+    else d.b = p;
+    drawAtmBig();
+  });
+  const up = () => {
+    if (!atmBig || !atmBig.drag) return;
+    const d = atmBig.drag; atmBig.drag = null;
+    const it = atmBigItem();
+    if (d.mode === 'label' || !d.b || !it) { drawAtmBig(); return; }
+    const len = Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * it.img.step;
+    if (len < 1) { drawAtmBig(); return; }
+    addAtmMeas(side, it, { a: d.a, b: d.b, color: d.color, lab: [0, 0] }, len);
+  };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  drawAtmBig();
+}
+function atmBigItem() {
+  if (!atmBig || !V.state.tmj) return null;
+  const serie = V.state.tmj.series[atmBig.side];
+  return serie ? serie.find((x) => x.key === atmBig.key) : null;
+}
+function drawAtmBig() {
+  const it = atmBigItem(); if (!it) return;
+  const cv = atmBig.cv;
+  V.drawTmjSlice(cv, it.img, V.getTmjWindow(), drawZoom(cv, it.img.w, it.img.h));
+  const list = V.getTmjMeas(atmBig.side, it.family, it.off).slice();
+  const d = atmBig.drag;
+  if (d && d.mode === 'new' && d.b) list.push({ a: d.a, b: d.b, color: d.color, live: true });
+  drawMeasures(cv, list, it.img.step);
+  atmBig.bg.querySelector('#ab-title').textContent = `${t(atmBig.side === 'R' ? 'atm_side_r' : 'atm_side_l')} · ${atmLabel(it)}`;
+}
+// ------------------------------------------------------------------ polos del cóndilo (ajuste a mano)
+/**
+ * Diálogo para COLOCAR LOS POLOS de cada cóndilo sobre un corte axial a su altura (como en VOXEL):
+ * se arrastran los dos puntos y, al aceptar, se rehacen los cortes de ese lado.
+ */
+function openPolesDialog() {
+  const tmj = V.state.tmj; if (!tmj) return;
+  const sides = ['R', 'L'].filter((sd) => tmj.poles[sd]);
+  if (!sides.length) return;
+  const dzs = {}; for (const sd of sides) dzs[sd] = 0;
+  const views = {}; for (const sd of sides) views[sd] = V.condyleAxialView(sd, 30, 0.15, 0);
+  const prev = {}; for (const sd of sides) prev[sd] = V.getCondylePoles(sd);
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal poles"><h3>${t('dlg_poles_title')}</h3>
+    <div class="hint">${t('dlg_poles_hint')}</div>
+    <div class="poles-row">${sides.map((sd) => `<div class="poles-one" data-side="${sd}">
+      <div class="poles-lbl">${t(sd === 'R' ? 'atm_side_r' : 'atm_side_l')} <span class="poles-z" data-side="${sd}"></span></div><canvas></canvas></div>`).join('')}</div>
+    <div class="mrow"><button class="btn-ghost" id="dlg-cancel">${t('dlg_cancel')}</button>
+    <button class="btn-primary" style="width:auto;min-height:40px;padding:8px 22px" id="dlg-ok">${t('dlg_poles_ok')}</button></div></div>`;
+  document.body.appendChild(bg);
+  const win = V.getTmjWindow();
+  const draw = (sd) => {
+    const box = bg.querySelector(`.poles-one[data-side="${sd}"] canvas`), v = views[sd];
+    const zl = bg.querySelector(`.poles-z[data-side="${sd}"]`);
+    if (zl) zl.textContent = dzs[sd] ? `${dzs[sd] > 0 ? '+' : '-'}${Math.abs(dzs[sd])} mm` : '';
+    V.drawTmjSlice(box, v.img, win, drawZoom(box, v.img.w, v.img.h));
+    const g = box.getContext('2d');
+    const z = box._imgZoom || 1, k = canvasScale(box);
+    const med = [v.med[0] * z, v.med[1] * z], lat = [v.lat[0] * z, v.lat[1] * z];
+    const lw = 1.6 * k;
+    g.save();
+    g.strokeStyle = '#FDE047'; g.lineWidth = lw;
+    g.beginPath(); g.moveTo(med[0], med[1]); g.lineTo(lat[0], lat[1]); g.stroke();
+    g.font = `700 ${(12 * k).toFixed(1)}px Poppins, sans-serif`;
+    for (const [p, col, tag] of [[med, '#22E0FF', t('poles_med')], [lat, '#FF5CF0', t('poles_lat')]]) {
+      g.beginPath(); g.arc(p[0], p[1], lw * 4, 0, 2 * Math.PI); g.fillStyle = col; g.fill();
+      g.lineWidth = lw; g.strokeStyle = '#fff'; g.stroke();
+      g.fillStyle = col; g.strokeStyle = 'rgba(0,0,0,.8)'; g.lineWidth = lw * 2.5;
+      g.strokeText(tag, p[0] + lw * 6, p[1] - lw * 5); g.fillText(tag, p[0] + lw * 6, p[1] - lw * 5);
+      g.lineWidth = lw; g.strokeStyle = '#FDE047';
+    }
+    g.restore();
+  };
+  for (const sd of sides) {
+    const cv = bg.querySelector(`.poles-one[data-side="${sd}"] canvas`);
+    let drag = null;
+    cv.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const p = atmPos(cv, e), v = views[sd];
+      const dm = Math.hypot(p[0] - v.med[0], p[1] - v.med[1]), dl = Math.hypot(p[0] - v.lat[0], p[1] - v.lat[1]);
+      const lim = v.img.w / 12;                 // en píxeles del CORTE (el canvas puede ir a más resolución)
+      drag = dm < dl ? (dm < lim ? 'med' : null) : (dl < lim ? 'lat' : null);
+      if (!drag) return;
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
+      e.preventDefault();
+    });
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      dzs[sd] = Math.max(-20, Math.min(20, dzs[sd] + (e.deltaY > 0 ? -1 : 1)));
+      const keep = { med: views[sd].med, lat: views[sd].lat };
+      views[sd] = V.condyleAxialView(sd, 30, 0.15, dzs[sd]);
+      views[sd].med = keep.med; views[sd].lat = keep.lat;      // los polos se quedan donde el usuario los puso
+      draw(sd);
+    }, { passive: false });
+    cv.addEventListener('pointermove', (e) => { if (!drag) return; views[sd][drag] = atmPos(cv, e); draw(sd); });
+    const up = () => { drag = null; };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    draw(sd);
+  }
+  const close = () => bg.remove();
+  bg.querySelector('#dlg-cancel').addEventListener('click', close);
+  bg.querySelector('#dlg-ok').addEventListener('click', () => {
+    close();
+    const next = {};
+    for (const sd of sides) {
+      const v = views[sd];
+      const med = V.planeToWorld(v.img, v.med[0], v.med[1]);
+      const lat = V.planeToWorld(v.img, v.lat[0], v.lat[1]);
+      V.setCondylePoles(sd, med, lat);
+      next[sd] = { med, lat };
+    }
+    renderTmj(); fitTmjAspect();
+    V.history.record({
+      label: 'atm_poles',
+      undo: () => { for (const sd of sides) V.setCondylePoles(sd, prev[sd].med, prev[sd].lat); renderTmj(); },
+      redo: () => { for (const sd of sides) V.setCondylePoles(sd, next[sd].med, next[sd].lat); renderTmj(); },
+    });
+    refreshHistoryButtons();
+    const wid = (sd) => { const q = V.state.tmj.poles[sd]; return Math.hypot(q.lat[0] - q.med[0], q.lat[1] - q.med[1], q.lat[2] - q.med[2]).toFixed(1); };
+    setStatus(t('st_atm_poles', { r: wid('R'), l: wid('L') }));
+  });
+}
+
 // ------------------------------------------------------------------ panorámica (corte curvo)
-let panBusy = false, panPending = null, panEdit = false, panDrag = null;
+let panBusy = false, panPending = null, panEdit = false, panDrag = null, panMeasDrag = null;
 
 /** Rehace la panorámica. Si ya se está calculando, encola la última petición (grosor en vivo). */
 async function showPanoramic(opts = {}) {
@@ -1154,18 +1427,32 @@ async function showPanoramic(opts = {}) {
 function drawPan() {
   const pano = V.state.pano; if (!pano) return;
   const w = V.getPanoWindow();
-  V.drawPanoramic($('#pan-canvas'), pano.image, w);
+  const cv = $('#pan-canvas');
+  V.drawPanoramic(cv, pano.image, w, drawZoom(cv, pano.image.width, pano.image.height));
+  const list = V.getPanoMeas().slice();
+  if (panMeasDrag && panMeasDrag.mode === 'new' && panMeasDrag.b) list.push({ a: panMeasDrag.a, b: panMeasDrag.b, color: panMeasDrag.color, live: true });
+  drawMeasures(cv, list, pano.image.step);
   $('#pan-info').textContent = t('wl', { w: Math.round(w.upper - w.lower), l: Math.round((w.upper + w.lower) / 2) }) + ' · ' + pano.thickness + ' mm' + (pano.mip ? ' · MIP' : '');
 }
 
 /** Modo EDICIÓN de la curva: axial + panorámica a la vez y puntos de control arrastrables en el axial. */
+let archBeforeEdit = false;   // estado de la casilla «curva» antes de entrar a editar (se restaura al salir)
 function setPanoEdit(on) {
+  const was = panEdit;
   panEdit = !!on;
   $('#pan-edit').setAttribute('aria-pressed', String(panEdit));
-  $('#pan-curve').checked = true;
+  // editando hace falta ver la curva; al salir vuelve a como estaba (desactivada por defecto, v0.7.8)
+  if (panEdit && !was) { archBeforeEdit = $('#pan-curve').checked; $('#pan-curve').checked = true; }
+  else if (!panEdit && was) { $('#pan-curve').checked = archBeforeEdit; V.setArchVisible(archBeforeEdit); }
   V.setPanoEdit(panEdit);
   $('.vp[data-id="vpAx"]').classList.toggle('editing', panEdit);
   applyLayout(panEdit ? 'panEdit' : 'vpPan', false);
+  // el salto a la altura de los dientes se repite TRAS la disposición: al cambiar de tamaño el visor,
+  // Cornerstone reencuadra y el corte se quedaba donde estuviera (había que buscar los dientes a mano)
+  if (panEdit) {
+    const z = V.state.pano && V.state.pano.curve ? V.state.pano.curve.z : null;
+    if (Number.isFinite(z)) V.jumpViewportSticky(V.VP.ax, 2, z);
+  }
   setStatus(t(panEdit ? 'st_pan_edit' : 'st_pan_edit_off'));
 }
 
@@ -1204,7 +1491,9 @@ function applyLayout(name, remember = true) {
 
 function toggleMaximize(id) {
   if (!current) return;                       // solo escáneres: únicamente hay visor 3D
-  if (maximized === id) { applyLayout(maximized_prev || 'quad'); return; }
+  // ya está solo en pantalla (por el botón ⤢ o por la barra de vistas): al minimizar o hacer doble clic,
+  // se vuelve al 2×2 (petición de Manuel, v0.7.4)
+  if (maximized === id || layout === id) { maximized = null; applyLayout(maximized_prev && maximized_prev !== id ? maximized_prev : 'quad'); return; }
   maximized_prev = layout;
   applyLayout(id);
   maximized = id;
@@ -1213,6 +1502,69 @@ let maximized_prev = 'quad';
 
 function visibleViewports() {
   return Object.values(V.VP).filter((id) => !$(`.vp[data-id="${id}"]`).classList.contains('hidden'));
+}
+
+const vpShown = (id) => !$(`.vp[data-id="${id}"]`).classList.contains('hidden');
+
+/**
+ * PNG de lo que se está viendo. La panorámica y el mosaico de ATM NO son visores de Cornerstone, así que
+ * `viewer.screenshot` no los veía y el botón de Captura no hacía nada (v0.7.7): se componen aparte a partir
+ * de sus canvas.
+ */
+function shotPng() {
+  if (vpShown('vpAtm')) return shotDom($('#atm-grid'));
+  if (vpShown('vpPan')) return shotDom($('.vp[data-id="vpPan"] .pan-wrap'));
+  return V.screenshot(visibleViewports(), watermark());
+}
+
+/**
+ * Compone en un PNG los canvas (y los rótulos) que hay dentro de un trozo de la interfaz, cada uno en el
+ * sitio y el tamaño en que se ve (los canvas van con `object-fit: contain`).
+ */
+function shotDom(root) {
+  if (!root) return null;
+  const r0 = root.getBoundingClientRect();
+  if (!r0.width || !r0.height) return null;
+  const s = Math.max(1, Math.min(2, 1500 / r0.width));
+  const out = document.createElement('canvas');
+  out.width = Math.round(r0.width * s); out.height = Math.round(r0.height * s);
+  const g = out.getContext('2d');
+  g.fillStyle = (getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg') || '').trim() || '#000';
+  g.fillRect(0, 0, out.width, out.height);
+  for (const cv of root.querySelectorAll('canvas')) {
+    const r = cv.getBoundingClientRect();
+    if (!r.width || !r.height || !cv.width || !cv.height) continue;
+    const k = Math.min(r.width / cv.width, r.height / cv.height);       // object-fit: contain
+    const w = cv.width * k, h = cv.height * k;
+    g.drawImage(cv, (r.left - r0.left + (r.width - w) / 2) * s, (r.top - r0.top + (r.height - h) / 2) * s, w * s, h * s);
+  }
+  // rótulos del mosaico (van en HTML, no en el canvas): pastilla oscura + texto blanco, como en pantalla
+  for (const el of root.querySelectorAll('.atm-cell > span, .atm-side')) {
+    const tx = (el.textContent || '').trim(); if (!tx) continue;
+    const r = el.getBoundingClientRect(); if (!r.width) continue;
+    const fs = parseFloat(getComputedStyle(el).fontSize) * s;
+    const x = (r.left - r0.left) * s, y = (r.top - r0.top) * s;
+    g.font = `600 ${fs.toFixed(1)}px Poppins, sans-serif`;
+    g.textBaseline = 'top';
+    if (el.tagName === 'SPAN') {
+      g.fillStyle = 'rgba(0,0,0,.62)';
+      g.fillRect(x, y, g.measureText(tx).width + 8 * s, fs * 1.5);
+      g.fillStyle = '#fff';
+      g.fillText(tx, x + 4 * s, y + fs * 0.25);
+    } else {
+      // «Derecha» / «Izquierda» van en VERTICAL en su columna (writing-mode), leyéndose de abajo arriba
+      g.save();
+      g.translate(x + (r.width * s) / 2, y + (r.height * s) / 2);
+      g.rotate(-Math.PI / 2);
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `800 ${fs.toFixed(1)}px Poppins, sans-serif`;
+      g.fillStyle = (getComputedStyle(document.documentElement).getPropertyValue('--accent') || '').trim() || '#22E0FF';
+      g.fillText(tx, 0, 0);
+      g.restore();
+    }
+  }
+  V.stampWatermark(out, watermark());
+  return out.toDataURL('image/png');
 }
 
 // ------------------------------------------------------------------ panel derecho
@@ -1299,8 +1651,10 @@ function wireUI() {
     const r = $('#vpSag').getBoundingClientRect();
     airwayPicked([e.clientX - r.left, e.clientY - r.top]);
   });
-  $('#aw-undo').addEventListener('click', (e) => { e.stopPropagation(); if (tmjPick) undoTmj(); else undoAirway(); });
-  $('#aw-cancel').addEventListener('click', (e) => { e.stopPropagation(); if (tmjPick) cancelTmj(); else cancelAirway(); });
+  $('#aw-undo').addEventListener('click', (e) => { e.stopPropagation(); undoAirway(); });
+  $('#aw-cancel').addEventListener('click', (e) => { e.stopPropagation(); cancelAirway(); });
+  $('#atm-undo').addEventListener('click', (e) => { e.stopPropagation(); undoTmj(); });
+  $('#atm-cancel').addEventListener('click', (e) => { e.stopPropagation(); cancelTmj(); });
   // ATM: un clic sobre cada cóndilo, en cualquiera de los tres cortes
   $('#btn-atm').addEventListener('click', () => startTmj());
   $('#atm-redo').addEventListener('click', () => startTmj());
@@ -1322,11 +1676,37 @@ function wireUI() {
   let tdrag = null;
   grid.addEventListener('wheel', atmWheel, { passive: false });
   grid.addEventListener('contextmenu', (e) => { if (V.state.tmj) e.preventDefault(); });
+  grid.addEventListener('click', (e) => {
+    const z = e.target.closest('.atm-zoom'); if (!z) return;
+    const cell = z.closest('.atm-cell'); if (!cell) return;
+    e.stopPropagation();
+    openAtmBig(cell.dataset.side, cell.dataset.key);
+  });
+  grid.addEventListener('dblclick', (e) => {
+    const cell = e.target.closest('.atm-cell:not(.atm-gap)'); if (!cell) return;
+    openAtmBig(cell.dataset.side, cell.dataset.key);
+  });
+  $('#atm-poles').addEventListener('click', openPolesDialog);
+  // DOBLE CLIC = ampliar el corte. No vale el evento `dblclick`: este `pointerdown` llama a
+  // preventDefault() (para arrastrar el brillo sin seleccionar texto) y eso cancela los eventos de ratón
+  // de compatibilidad, incluido el doble clic (v0.7.7). Se detecta a mano.
+  let lastTap = { t: 0, key: '' };
   grid.addEventListener('pointerdown', (e) => {
-    if (!V.state.tmj) return;
-    if (e.button === 2 || e.shiftKey) {
-      tdrag = { x: e.clientX, y: e.clientY, w: V.getTmjWindow() }; grid.setPointerCapture(e.pointerId); e.preventDefault();
-    } else atmDown(e);
+    if (!V.state.tmj || e.target.closest('.atm-zoom')) return;
+    const cell = e.target.closest('.atm-cell:not(.atm-gap)');
+    if (cell && !e.shiftKey && e.button === 0) {
+      const key = cell.dataset.side + '|' + cell.dataset.key, now = performance.now();
+      if (lastTap.key === key && now - lastTap.t < 450) {
+        lastTap = { t: 0, key: '' };
+        openAtmBig(cell.dataset.side, cell.dataset.key);
+        e.preventDefault();
+        return;
+      }
+      lastTap = { t: now, key };
+    }
+    atmDown(e);                                   // medir (Mayús) o mover una etiqueta
+    if (atmDrag) return;
+    tdrag = { x: e.clientX, y: e.clientY, w: V.getTmjWindow() }; grid.setPointerCapture(e.pointerId); e.preventDefault();
   });
   grid.addEventListener('pointermove', (e) => {
     if (tdrag) {
@@ -1337,6 +1717,10 @@ function wireUI() {
   const tend = () => { if (tdrag) { tdrag = null; return; } atmUp(); };
   grid.addEventListener('pointerup', tend); grid.addEventListener('pointercancel', tend);
   // exportar mallas: botón del panel derecho y clic derecho sobre el propio panel
+  // Mayús pulsado = modo medir sobre los cortes de ATM y la panorámica (solo entonces sale la cruz)
+  window.addEventListener('keydown', (e) => { if (e.key === 'Shift') setShift(true); });
+  window.addEventListener('keyup', (e) => { if (e.key === 'Shift') setShift(false); });
+  window.addEventListener('blur', () => setShift(false));
   $('#btn-export').addEventListener('click', exportMeshesDialog);
   $('#vispanel').addEventListener('contextmenu', (e) => {
     if (!V.getMeshes().length) return;
@@ -1350,7 +1734,7 @@ function wireUI() {
     refreshHistoryButtons();
     setStatus(t('st_atm_meas_clear'));
   });
-  for (const ev of ['pointerdown', 'pointerup', 'mousedown', 'click']) $('#aw-bar').addEventListener(ev, (e) => e.stopPropagation());
+  for (const ev of ['pointerdown', 'pointerup', 'mousedown', 'click']) { $('#aw-bar').addEventListener(ev, (e) => e.stopPropagation()); $('#atm-bar').addEventListener(ev, (e) => e.stopPropagation()); }
   // deshacer / rehacer
   $('#btn-undo').addEventListener('click', () => doUndo());
   $('#btn-redo').addEventListener('click', () => doRedo());
@@ -1365,6 +1749,14 @@ function wireUI() {
   $('#pan-mip').addEventListener('change', () => showPanoramic());
   $('#pan-curve').addEventListener('change', (e) => V.setArchVisible(e.target.checked));
   $('#pan-edit').addEventListener('click', () => setPanoEdit(!panEdit));
+  $('#pan-clear').addEventListener('click', () => {
+    const prev = V.getPanoMeas().slice();
+    if (!prev.length) return;
+    V.clearPanoMeas(); drawPan();
+    V.history.record({ label: 'pan_meas_clear', undo: () => { V.setPanoMeas(prev); drawPan(); }, redo: () => { V.clearPanoMeas(); drawPan(); } });
+    refreshHistoryButtons();
+    setStatus(t('st_pan_meas_clear'));
+  });
   $('#pan-reset').addEventListener('click', async () => {
     const prev = V.getPanoControl();
     await showPanoramic({ recompute: true });
@@ -1401,13 +1793,52 @@ function wireUI() {
   axEl.addEventListener('pointerup', panEnd, true);
   axEl.addEventListener('pointercancel', panEnd, true);
   let pdrag = null;
-  $('#pan-canvas').addEventListener('pointerdown', (e) => { if (e.button !== 0) return; pdrag = { x: e.clientX, y: e.clientY, w: V.getPanoWindow() }; e.target.setPointerCapture(e.pointerId); });
+  // doble clic sobre la panorámica: vuelve al 2×2 (petición de Manuel, v0.7.8)
+  $('#pan-canvas').addEventListener('dblclick', () => { if (panEdit) setPanoEdit(false); applyLayout('quad'); });
+  $('#pan-canvas').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const cv = $('#pan-canvas');
+    if (V.state.pano) {
+      const p = atmPos(cv, e);
+      const lab = measAtLabel(V.getPanoMeas(), cv, p);
+      if (e.shiftKey || lab) {                      // MEDIR (Mayús) o mover la etiqueta de una medida
+        panMeasDrag = lab
+          ? { mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() }
+          : { mode: 'new', a: p, b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+        cv.setPointerCapture(e.pointerId); e.preventDefault();
+        return;
+      }
+    }
+    pdrag = { x: e.clientX, y: e.clientY, w: V.getPanoWindow() }; e.target.setPointerCapture(e.pointerId);
+  });
   $('#pan-canvas').addEventListener('pointermove', (e) => {
+    if (panMeasDrag) {
+      const p = atmPos($('#pan-canvas'), e), d = panMeasDrag;
+      if (d.mode === 'label') d.m.lab = [d.lab0[0] + (p[0] - d.p0[0]), d.lab0[1] + (p[1] - d.p0[1])];
+      else d.b = p;
+      drawPan();
+      return;
+    }
     if (!pdrag) return;
     const w0 = pdrag.w, ww = Math.max(20, (w0.upper - w0.lower) + (e.clientX - pdrag.x) * 4), wl = (w0.upper + w0.lower) / 2 + (e.clientY - pdrag.y) * 4;
     V.setPanoWindow({ lower: wl - ww / 2, upper: wl + ww / 2 }); drawPan();
   });
-  const pend = (e) => { if (!pdrag) return; const w0 = pdrag.w, w1 = V.getPanoWindow(); pdrag = null; if (Math.abs(w0.lower - w1.lower) > 0.5 || Math.abs(w0.upper - w1.upper) > 0.5) V.history.record({ label: 'mprwin', undo: () => { V.setPanoWindow(w0); drawPan(); }, redo: () => { V.setPanoWindow(w1); drawPan(); } }); };
+  const pend = (e) => {
+    if (panMeasDrag) {
+      const d = panMeasDrag; panMeasDrag = null;
+      if (d.mode === 'label' || !d.b) { drawPan(); return; }
+      const len = Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * V.state.pano.image.step;
+      if (len < 1) { drawPan(); return; }
+      const m = V.addPanoMeas({ a: d.a, b: d.b, color: d.color, lab: [0, 0] });
+      atmMeasN++;
+      V.history.record({ label: 'pan_meas',
+        undo: () => { const l = V.getPanoMeas(); const i = l.indexOf(m); if (i >= 0) l.splice(i, 1); drawPan(); },
+        redo: () => { V.addPanoMeas(m); drawPan(); } });
+      refreshHistoryButtons(); drawPan();
+      setStatus(t('st_pan_meas', { v: len.toFixed(1) }));
+      return;
+    }
+    if (!pdrag) return; const w0 = pdrag.w, w1 = V.getPanoWindow(); pdrag = null; if (Math.abs(w0.lower - w1.lower) > 0.5 || Math.abs(w0.upper - w1.upper) > 0.5) V.history.record({ label: 'mprwin', undo: () => { V.setPanoWindow(w0); drawPan(); }, redo: () => { V.setPanoWindow(w1); drawPan(); } }); };
   $('#pan-canvas').addEventListener('pointerup', pend); $('#pan-canvas').addEventListener('pointercancel', pend);
   for (const id of ['#in-folder', '#in-files', '#in-zip', '#in-mesh']) {
     $(id).addEventListener('change', (e) => { const list = collectFromFileList(e.target.files); e.target.value = ''; if (list.length) ingest(list); });
@@ -1430,7 +1861,7 @@ function wireUI() {
   $$('.legal-links a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); showLegal(a.dataset.legal, { onLang: afterLangChange }); }));
   $('#btn-help').addEventListener('click', () => alert(t('help_text') + '\n\n' + t('about', { v: VERSION })));
   $('#btn-shot').addEventListener('click', () => {
-    const url = V.screenshot(visibleViewports());
+    const url = shotPng();
     if (!url) return;
     fetch(url).then((r) => r.blob()).then((b) => download(b, 'tresD_DICOM_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.png'));
     setStatus(t('st_shot_saved'));
@@ -1523,5 +1954,5 @@ function countEvent(name) {
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-window.tresd = { V, renderTmj, redrawTmj, showPanoramic };   // acceso desde la consola del navegador (depuración)
+window.tresd = { V, renderTmj, redrawTmj, showPanoramic, fitTmjAspect, openAtmBig, openPolesDialog, shotPng };   // acceso desde la consola del navegador (depuración)
 main();

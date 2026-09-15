@@ -152,10 +152,20 @@ export async function quickSegment(volume, sorted, getSlice, onStatus, opts = {}
     if (det < 0) for (let t = 0; t < m.polys.length; t += 3) { const x = m.polys[t + 1]; m.polys[t + 1] = m.polys[t + 2]; m.polys[t + 2] = x; }
     return { pts: w, polys: m.polys };
   };
-  for (const [key, value, iters, pass] of [['skull', thr.bone, 15, 0.1], ['soft', thr.soft, 20, 0.08]]) {
+  const mmPerVox = f * Math.min(...volume.spacing);
+  for (const [key, value, iters, pass] of [['skull', thr.bone, 15, 0.1], ['soft', thr.soft, 12, 0.08]]) {
     if (onStatus) onStatus(key);
     await yieldUI();
-    let m = isosurface(img, value);
+    // la PIEL se saca de la superficie EXTERNA del cuerpo (sin senos ni vía aérea dentro): ver bodyField
+    let m = null;
+    if (key === 'soft') {
+      try {
+        const body = bodyField(img, value, mmPerVox);
+        await yieldUI();
+        if (body) m = isosurface(body, value);
+      } catch (e) { console.warn('tresD piel: superficie externa no disponible', e); m = null; }
+    }
+    if (!m || !m.polys.length) m = isosurface(img, value);
     if (!m.polys.length) { out[key] = null; continue; }
     m = largestComponent(m.pts, m.polys);
     const parts = m.parts;
@@ -230,4 +240,203 @@ function mergeWithBox(coarse, fine, wb) {
   polys.set(keep, 0);
   for (let i = 0; i < fine.polys.length; i++) polys[keep.length + i] = fine.polys[i] + nv;
   return { pts, polys, parts: coarse.parts, nTri: polys.length / 3 };
+}
+
+// ------------------------------------------------------------------ superficie EXTERNA de la piel
+// Port de `segment_soft` de VOXEL (ceph_segment.py). El contorno directo al umbral de piel capta TAMBIÉN
+// el aire interno (senos, fosas nasales, VÍA AÉREA) y aparece como nubes dentro del blando translúcido.
+// El truco de VOXEL: procesar la MÁSCARA antes de sacar la isosuperficie.
+//   1) máscara de cuerpo (HU > umbral de piel)
+//   2) CIERRE morfológico de ~4 mm: sella narinas, coanas y boca sin mover el perfil facial
+//   3) del AIRE se conserva solo el EXTERIOR (el componente mayor, y los que pasen del 55 % del mayor
+//      por si el FOV lo parte en dos); todo lo demás (senos, nasofaringe, orofaringe) pasa a sólido
+//   4) mayor componente sólido = la cabeza
+//   5) marching cubes sobre la máscara SUAVIZADA (gaussiano de ~1 vóxel): si se marcha sobre el 0/1 la
+//      piel sale escalonada.
+
+/** Máximo (o mínimo) deslizante 1D exacto en O(n) por eje (van Herk / Gil-Werman). */
+function morph1D(src, dst, nx, ny, nz, axis, r, isMax) {
+  if (r <= 0) { dst.set(src); return; }
+  const k = 2 * r + 1;
+  const n = axis === 0 ? nx : axis === 1 ? ny : nz;
+  const stride = axis === 0 ? 1 : axis === 1 ? nx : nx * ny;
+  const outer = [nx, ny, nz]; outer[axis] = 1;
+  const pre = new Uint8Array(n + k), suf = new Uint8Array(n + k);
+  const best = isMax ? (a, b) => (a > b ? a : b) : (a, b) => (a < b ? a : b);
+  const pad = isMax ? 0 : 1;
+  for (let c = 0; c < outer[2]; c++) {
+    for (let b2 = 0; b2 < outer[1]; b2++) {
+      for (let a2 = 0; a2 < outer[0]; a2++) {
+        const base = a2 + b2 * nx + c * nx * ny;
+        // prefijos por bloques de k
+        for (let i = 0; i < n; i++) {
+          const v = src[base + i * stride];
+          pre[i] = (i % k === 0) ? v : best(pre[i - 1], v);
+        }
+        for (let i = n; i < n + k; i++) pre[i] = pad;
+        for (let i = n - 1; i >= 0; i--) {
+          const v = src[base + i * stride];
+          suf[i] = ((i + 1) % k === 0 || i === n - 1) ? v : best(suf[i + 1], v);
+        }
+        for (let i = 0; i < n; i++) {
+          const lo = i - r, hi = i + r;
+          const a = lo < 0 ? pad : suf[lo];
+          const bb = hi >= n ? pad : pre[hi];
+          dst[base + i * stride] = best(a, bb);
+        }
+      }
+    }
+  }
+}
+
+/** Cierre morfológico (dilatar y erosionar) con elemento cúbico de radio r vóxeles. */
+function closeMask(mask, nx, ny, nz, r) {
+  const tmp = new Uint8Array(mask.length), out = new Uint8Array(mask.length);
+  morph1D(mask, tmp, nx, ny, nz, 0, r, true);
+  morph1D(tmp, out, nx, ny, nz, 1, r, true);
+  morph1D(out, tmp, nx, ny, nz, 2, r, true);
+  morph1D(tmp, out, nx, ny, nz, 0, r, false);
+  morph1D(out, tmp, nx, ny, nz, 1, r, false);
+  morph1D(tmp, out, nx, ny, nz, 2, r, false);
+  return out;
+}
+
+/** Etiquetado 6-conexo de `mask === want`. Devuelve { lab: Int32Array (0 = fuera), sizes: [n0, n1…] }. */
+function label3D(mask, nx, ny, nz, want) {
+  const lab = new Int32Array(mask.length);
+  const q = new Int32Array(mask.length);
+  const sizes = [0];
+  const frame = nx * ny;
+  let cur = 0;
+  for (let s = 0; s < mask.length; s++) {
+    if (mask[s] !== want || lab[s]) continue;
+    cur++; let head = 0, tail = 0;
+    q[tail++] = s; lab[s] = cur;
+    let n = 0;
+    while (head < tail) {
+      const p = q[head++]; n++;
+      const i = p % nx, j = ((p / nx) | 0) % ny, k = (p / frame) | 0;
+      if (i > 0 && mask[p - 1] === want && !lab[p - 1]) { lab[p - 1] = cur; q[tail++] = p - 1; }
+      if (i < nx - 1 && mask[p + 1] === want && !lab[p + 1]) { lab[p + 1] = cur; q[tail++] = p + 1; }
+      if (j > 0 && mask[p - nx] === want && !lab[p - nx]) { lab[p - nx] = cur; q[tail++] = p - nx; }
+      if (j < ny - 1 && mask[p + nx] === want && !lab[p + nx]) { lab[p + nx] = cur; q[tail++] = p + nx; }
+      if (k > 0 && mask[p - frame] === want && !lab[p - frame]) { lab[p - frame] = cur; q[tail++] = p - frame; }
+      if (k < nz - 1 && mask[p + frame] === want && !lab[p + frame]) { lab[p + frame] = cur; q[tail++] = p + frame; }
+    }
+    sizes.push(n);
+  }
+  return { lab, sizes };
+}
+
+/**
+ * Votos de «agujero» por vóxel: para cada uno de los tres ejes se recorre corte a corte, se marca el aire
+ * que se alcanza desde el BORDE del corte y el aire que queda sin alcanzar suma un voto. Un vóxel con 2 o 3
+ * votos es aire ENCERRADO dentro de la cabeza (faringe, fosas, senos); las concavidades de la cara están
+ * abiertas en los tres ejes y se quedan en 0 ó 1 voto.
+ */
+function holeVotes(mask, nx, ny, nz) {
+  const votes = new Uint8Array(mask.length);
+  const frame = nx * ny;
+  const cap = Math.max(nx * ny, ny * nz, nx * nz);
+  const lab = new Int32Array(cap), q = new Int32Array(cap);
+  const run = (axis) => {
+    const [w, h, ns] = axis === 2 ? [nx, ny, nz] : axis === 1 ? [nx, nz, ny] : [ny, nz, nx];
+    const at = axis === 2 ? (a2, b2, s) => a2 + b2 * nx + s * frame
+      : axis === 1 ? (a2, b2, s) => a2 + s * nx + b2 * frame
+        : (a2, b2, s) => s + a2 * nx + b2 * frame;
+    const perim = 2 * (w + h);
+    const minBorde = Math.max(6, Math.round(0.12 * perim));
+    for (let s = 0; s < ns; s++) {
+      lab.fill(0, 0, w * h);
+      let cur = 0;
+      const touch = [0];
+      for (let p0 = 0; p0 < w * h; p0++) {
+        const a0 = p0 % w, b0 = (p0 / w) | 0;
+        if (lab[p0] || mask[at(a0, b0, s)]) continue;
+        cur++; let head = 0, tail = 0, tb = 0;
+        lab[p0] = cur; q[tail++] = p0;
+        while (head < tail) {
+          const p = q[head++], a2 = p % w, b2 = (p / w) | 0;
+          if (a2 === 0 || a2 === w - 1 || b2 === 0 || b2 === h - 1) tb++;
+          if (a2 > 0 && !lab[p - 1] && !mask[at(a2 - 1, b2, s)]) { lab[p - 1] = cur; q[tail++] = p - 1; }
+          if (a2 < w - 1 && !lab[p + 1] && !mask[at(a2 + 1, b2, s)]) { lab[p + 1] = cur; q[tail++] = p + 1; }
+          if (b2 > 0 && !lab[p - w] && !mask[at(a2, b2 - 1, s)]) { lab[p - w] = cur; q[tail++] = p - w; }
+          if (b2 < h - 1 && !lab[p + w] && !mask[at(a2, b2 + 1, s)]) { lab[p + w] = cur; q[tail++] = p + w; }
+        }
+        touch.push(tb);
+      }
+      // FUERA = el aire que se apoya en buena parte del marco del corte. El que solo lo roza (la faringe
+      // saliendo por el borde del encuadre, una fosa cortada) cuenta como AGUJERO.
+      for (let b2 = 0; b2 < h; b2++) for (let a2 = 0; a2 < w; a2++) {
+        const p = a2 + b2 * w, l = lab[p];
+        if (l && touch[l] < minBorde) votes[at(a2, b2, s)]++;
+      }
+    }
+  };
+  run(0); run(1); run(2);
+  return votes;
+}
+
+/**
+ * Campo 0..1 de la SUPERFICIE EXTERNA del cuerpo, listo para marching cubes a 0,5.
+ * `img` = grid reducido (buildGrid), `thr` = umbral de piel, `mmPerVox` = mm por vóxel del grid.
+ */
+export function bodyField(img, thr, mmPerVox) {
+  const [nx, ny, nz] = img.getDimensions();
+  const hu = img.getPointData().getScalars().getData();
+  let mask = new Uint8Array(hu.length);
+  let any = 0;
+  for (let i = 0; i < hu.length; i++) if (hu[i] > thr) { mask[i] = 1; any++; }
+  if (!any) return null;
+  const rmm = 3.0;
+  const r = Math.max(1, Math.round(rmm / Math.max(mmPerVox, 0.1)));      // cierre corto: sella narinas y poros
+  const closed = closeMask(mask, nx, ny, nz, r);
+  // AIRE INTERNO por VOTACIÓN EN LOS TRES EJES (2,5D). Buscar el aire exterior en 3D no vale: la faringe
+  // se comunica con el exterior por la boca o por el borde del encuadre y queda unida al aire de fuera
+  // (medido: el 60 % de la pared de la vía aérea seguía en la malla). En cambio, en un corte AXIAL la
+  // faringe es un agujero cerrado, y en uno CORONAL o SAGITAL también lo son los senos. Se rellena el aire
+  // que queda encerrado en AL MENOS DOS de los tres ejes: así no se toca ninguna concavidad de la cara
+  // (que está abierta en los tres) y desaparecen faringe, fosas y senos.
+  const total = hu.length;
+  const votos = holeVotes(closed, nx, ny, nz);
+  let dentro = 0;
+  const tapado = new Uint8Array(total);
+  for (let i = 0; i < total; i++) {
+    tapado[i] = (closed[i] || votos[i] >= 2) ? 1 : 0;
+    if (!mask[i] && votos[i] >= 2) { mask[i] = 1; dentro++; }
+  }
+  // con las fugas ya tapadas, el aire que NO llega al borde del volumen es cavidad cerrada: se rellena
+  // entera (esto remata las paredes de la faringe que la votación deja por los pelos)
+  const air = label3D(tapado, nx, ny, nz, 0);
+  if (air.sizes.length > 1) {
+    const borde = new Uint8Array(air.sizes.length);
+    const mk = (p) => { if (air.lab[p]) borde[air.lab[p]] = 1; };
+    for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) { mk(j * nx + k * nx * ny); mk(nx - 1 + j * nx + k * nx * ny); }
+    for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) { mk(i + k * nx * ny); mk(i + (ny - 1) * nx + k * nx * ny); }
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { mk(i + j * nx); mk(i + j * nx + (nz - 1) * nx * ny); }
+    for (let i = 0; i < total; i++) if (!mask[i] && air.lab[i] && !borde[air.lab[i]]) { mask[i] = 1; dentro++; }
+  }
+  const sol = label3D(mask, nx, ny, nz, 1);                              // mayor sólido = la cabeza
+  let fuera = null;
+  if (sol.sizes.length > 2) {
+    let big = 1, top = 0;
+    for (let i = 1; i < sol.sizes.length; i++) if (sol.sizes[i] > top) { top = sol.sizes[i]; big = i; }
+    fuera = (i) => sol.lab[i] !== big;
+  }
+  console.log(`tresD piel: cierre ${r} vóx · ${dentro} vóxeles de aire interno rellenos`);
+  // El campo que va a marching cubes es el HU ORIGINAL con el aire interno SUBIDO por encima del umbral:
+  // así la superficie externa sale EXACTAMENTE igual que antes (sub-vóxel, sin suavizar la nariz ni los
+  // labios, que es lo que descuadraba el drapeado de la foto) y desaparecen las superficies de dentro.
+  const alto = thr + 400, bajo = Math.min(thr - 400, -1000);
+  const out = new Float32Array(total);
+  for (let i = 0; i < total; i++) {
+    if (fuera && fuera(i) && hu[i] <= thr) { out[i] = bajo; continue; }   // trozos sueltos: fuera
+    out[i] = (mask[i] && hu[i] <= thr) ? alto : hu[i];
+  }
+  const img2 = vtkImageData.newInstance();
+  img2.setDimensions(nx, ny, nz);
+  img2.setSpacing(...img.getSpacing());
+  img2.setOrigin(...img.getOrigin());
+  img2.getPointData().setScalars(vtkDataArray.newInstance({ name: 'body', values: out, numberOfComponents: 1 }));
+  return img2;
 }

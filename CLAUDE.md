@@ -13,8 +13,15 @@ cruz de referencia en los cortes, segmentación de VÍA AÉREA con mapa de calor
 corte curvo PANORÁMICO editable y presets de tejido blando y vía aérea (v0.7), cortes de ATM por cóndilo
 (v0.7.1), cortes de ATM a 1 mm recorribles con la rueda y con medidas, panorámica hasta los cóndilos y
 reparación de series con un bloque de cortes fuera de sitio (v0.7.2), exportación de mallas a STL y encuadre
-automático de los cortes de ATM (v0.7.3). 100% en el navegador: los DICOM y las
-fotos nunca salen del ordenador del usuario.
+automático de los cortes de ATM (v0.7.3), cruz adaptativa al tamaño del visor, corte de ATM ampliado y polos
+del cóndilo ajustables a mano (v0.7.4), piel sin aire interno, medidas sobre panorámica y ATM con Mayús y
+marca de agua en las capturas (v0.7.5), rótulos y medidas nítidos sobre los cortes, coronal que salta de
+verdad a los cóndilos al marcarlos y medial/lateral correctos en CBCT sin la línea media en x = 0 (v0.7.6),
+captura de pantalla también en panorámica y ATM, doble clic para ampliar un corte de ATM y curva de la
+arcada apagada por defecto (v0.7.7), marca de agua «DICOM viewer» según el tema, grosor de la panorámica
+sobre el axial al editar, aviso de vía aérea que se cierra, doble clic en panorámica → 2×2 y axial de ATM
+a la altura de la cabeza del cóndilo (v0.7.8).
+100% en el navegador: los DICOM y las fotos nunca salen del ordenador del usuario.
 **Uso previsto declarado (MDR/RGPD): NO es producto sanitario con marcado CE ni sirve para diagnosticar.**
 No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medidas y alineación son «orientativas».
 
@@ -28,11 +35,15 @@ No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medida
 - **Versión en DOS sitios**: `package.json` ("version") y `src/version.js` (VERSION). Subirla en ambos.
 - Regla 1 de Manuel: antes de cambiar código, buscar TODOS los sitios que afectan al comportamiento
   (grep) y confirmar qué ruta gana; luego cambiar y subir versión.
-- Regla 3: tras cambios grandes, revisión de regresión con `node tests/smoke.mjs`, `node tests/loaders.mjs`,
+- Regla 3 (matizada el 15-09-2026 por Manuel, para no tardar 2 h en cambios pequeños): en peticiones
+  PEQUEÑAS (interfaz, valores por defecto, un botón) se pasan solo las baterías de lo tocado (~10 min).
+  La regresión COMPLETA queda para cambios grandes (carga de DICOM, segmentación, alineación, geometría,
+  render) o cuando se toca código compartido por muchas partes (`viewer.js` en zonas comunes, `contours.js`).
+  Regresión completa = `node tests/smoke.mjs`, `node tests/loaders.mjs`,
   `node tests/orient.mjs`, `node tests/meshes.mjs`, `node tests/align.mjs`, `node tests/legal.mjs`,
   `node tests/photo.mjs`, `node tests/align_node.mjs` (Node, dientes reales), `node tests/geom.mjs` (guarda de
   geometría), `node tests/wrap.mjs` (bloque de cortes fuera de sitio), `node tests/real.mjs`,
-  `node tests/features.mjs` (v0.7), `node tests/v071.mjs`, `node tests/v072.mjs` y `node tests/v073.mjs` hasta 0 errores.
+  `node tests/features.mjs` (v0.7), `node tests/v071.mjs`, `node tests/v072.mjs`, `node tests/v073.mjs`, `node tests/v074.mjs`, `node tests/v075.mjs`, `node tests/v076.mjs`, `node tests/v077.mjs` y `node tests/v078.mjs` hasta 0 errores.
 - Solo visualización: NO añadir diagnóstico automático ni IA sin pedirlo. Citar licencias de los motores.
 
 ## Arquitectura (ver CONTEXTO.md para el detalle)
@@ -55,7 +66,8 @@ No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medida
    `tests/make_meshes.py` (arcadas sintéticas), `tests/make_synth_cbct.py` (CBCT sintético con esas arcadas) y
    `tests/make_real_scans.py` (escáneres con dientes REALES sacados del CBCT DZ, en pose conocida) y
    `tests/make_bad_geom.py` (serie con un corte fuera de sitio: prueba de la guarda de geometría) y
-   `tests/make_wrap_geom.py` (serie con un BLOQUE de cortes girado: prueba de la reparación del orden)).
+   `tests/make_wrap_geom.py` (serie con un BLOQUE de cortes girado: prueba de la reparación del orden) y
+   `tests/make_offset_geom.py` (serie con el origen fuera de la línea media: prueba de medial/lateral)).
    Los `/tmp/testdata` no sobreviven a una sesión nueva: regenerarlos con esos scripts (DZ-CBCT.nrrd se
    descarga de la muestra de 3D Slicer; ver CONTEXTO.md §4).
 4. Escribir en el PC de Manuel `src/`, `docs/`, `public/`, configs (device_commit_files; device_bash NO monta).

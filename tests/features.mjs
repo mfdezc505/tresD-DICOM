@@ -218,7 +218,9 @@ await page.click('#pan-mip'); await page.waitForFunction(() => window.tresd.V.st
 await page.click('#pan-mip'); await page.waitForFunction(() => window.tresd.V.state.pano && window.tresd.V.state.pano.mip === true, null, { timeout: 120000 });
 await sleep(400); await shot('feat_pano_mip.png');
 check(true, 'grosor 20 mm y MIP recalculados');
-// la curva se dibuja sobre el axial
+// la curva se dibuja sobre el axial (desde v0.7.7 la casilla arranca DESMARCADA: se marca aquí)
+check((await ev(() => document.querySelector('#pan-curve').checked)) === false, 'la casilla «curva» arranca desmarcada (v0.7.7)');
+await page.check('#pan-curve'); await sleep(400);
 await page.click('[data-layout="vpAx"]'); await sleep(800); await shot('feat_pano_axial.png');
 const drawn = await ev(() => { const cv = document.querySelector('#vpAx .silh'); const g = cv.getContext('2d'); const d = g.getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i] > 200 && d[i + 1] > 180 && d[i + 2] < 120) n++; return n; });
 check(drawn > 50, `curva de la arcada dibujada sobre el axial (${drawn} píxeles amarillos)`);

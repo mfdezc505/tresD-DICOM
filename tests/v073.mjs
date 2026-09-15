@@ -49,7 +49,7 @@ const cross = await ev(() => {
   const c = g.getToolConfiguration('Crosshairs');
   return { r: c.handleRadius, hdpi: c.enableHDPIHandles };
 });
-check(cross.r === 1.4, `radio de los mangos ${cross.r} px (2 en v0.7.1, 3 de fábrica)`);
+check(cross.r > 0.5 && cross.r <= 1.7, `radio de los mangos ${cross.r.toFixed(2)} px (desde v0.7.4 se adapta al visor; 3 de fábrica)`);
 check(cross.hdpi === false, 'sin escalado por densidad de pantalla (en pantallas retina se veían al doble)');
 
 console.log('— curva panorámica');

@@ -27,8 +27,8 @@ import { History } from './history.js';
 import { airwayAuto, heatColors, heatRange, airwayNorm, airwayClassify } from './airway.js';
 export { airwayNorm, airwayClassify };
 import { archCurve, curveFrom, buildPanoramic, drawPanoramic } from './panoramic.js';
-import { tmjSampler, refineCondyle, condyleSeries, condyleSlice, drawSlice, clampAspect, TMJ_SAG_OFFS } from './tmj.js';
-export { clampAspect };
+import { tmjSampler, refineCondyle, condyleSeries, condyleSlice, samplePlane, polesFrom, planeToWorld, worldToPlane, drawSlice, clampAspect, bestAxialOffset, TMJ_SAG_OFFS } from './tmj.js';
+export { clampAspect, planeToWorld, worldToPlane };
 export { drawSlice as drawTmjSlice, TMJ_SAG_OFFS };
 export { drawPanoramic };
 
@@ -70,7 +70,7 @@ export const state = {
   teeth: null,                  // destinos por arco elegidos (pickTargets; tras el reintento mutuo, la arcada ganadora)
   crosshairs: false,            // cruz de referencia en los MPR (CrosshairsTool)
   pano: null,                   // panorámica { curve, image, thickness, mip }
-  showArch: true,               // dibujar la curva de la arcada sobre el axial
+  showArch: false,              // dibujar la curva de la arcada sobre el axial (apagada por defecto, v0.7.7)
   panoEdit: false,              // editando la curva de la panorámica (puntos de control sobre el axial)
   awMarks: null,                // marcas [sup, inf] (mundo) mientras se marca la vía aérea en el sagital
   tmj: null,                    // cortes de ATM { poles: {R, L}, series: {R: [...], L: [...]}, win }
@@ -192,6 +192,22 @@ export async function initViewer(els) {
     g.beginPath();
     c.pts.forEach((p, i) => { const q = vp.worldToCanvas([p[0], p[1], c.z]); if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); });
     g.stroke();
+    // editando: el GROSOR de la panorámica como dos líneas finas a ±grosor/2 por la normal a la curva (v0.7.8)
+    if (state.panoEdit && state.pano.thickness > 0 && c.pts.length > 2) {
+      const h = state.pano.thickness / 2, n = c.pts.length;
+      g.setLineDash([]); g.lineWidth = 1; g.globalAlpha = 0.6;
+      for (const sgn of [1, -1]) {
+        g.beginPath();
+        for (let i = 0; i < n; i++) {
+          const a = c.pts[Math.max(0, i - 1)], b = c.pts[Math.min(n - 1, i + 1)];
+          const tx = b[0] - a[0], ty = b[1] - a[1], L = Math.hypot(tx, ty) || 1;
+          const p = c.pts[i], q = vp.worldToCanvas([p[0] + sgn * h * (-ty / L), p[1] + sgn * h * (tx / L), c.z]);
+          if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]);
+        }
+        g.stroke();
+      }
+      g.globalAlpha = 0.9;
+    }
     if (state.panoEdit && c.control) {                    // puntos de CONTROL arrastrables
       g.setLineDash([]); g.lineWidth = 2; g.strokeStyle = '#0B0F1A';
       for (const p of c.control) {
@@ -1245,6 +1261,7 @@ function applyMprBindings() {
     tgm.setToolDisabled(X);
     tgm.setToolActive(W, primary);
   }
+  tuneCrosshairs();
   for (const id of MPR_IDS) { try { state.engine.getViewport(id).render(); } catch (e) { /* nada */ } }
 }
 
@@ -1309,23 +1326,67 @@ function addAnnotations(pairs) {
 export function resize() {
   if (!state.engine) return;
   try { state.engine.resize(true, false); } catch (e) { /* nada */ }
+  tuneCrosshairs();
   measure3d && measure3d.refresh();
   silhouettes && silhouettes.redrawAll();
 }
 
+/**
+ * Tamaño de la CRUZ según el tamaño del visor (v0.7.4). Cornerstone dibuja los mangos y el hueco central en
+ * PÍXELES FIJOS, así que en las disposiciones con visores pequeños («3D + cortes», «en fila») salían enormes.
+ * Se recalcula con el lado menor de los cortes MPR visibles.
+ */
+function tuneCrosshairs() {
+  const tg = csTools.ToolGroupManager.getToolGroup(TG_MPR);
+  if (!tg || !elements) return;
+  let minDim = Infinity;
+  for (const id of MPR_IDS) {
+    const el = elements[id];
+    if (!el || !el.clientWidth || !el.clientHeight || el.closest('.hidden')) continue;
+    minDim = Math.min(minDim, el.clientWidth, el.clientHeight);
+  }
+  if (!Number.isFinite(minDim) || minDim < 20) return;
+  const r = Math.max(0.8, Math.min(1.6, minDim / 320));            // círculos de giro: discretos
+  const gap = Math.max(8, Math.min(26, Math.round(minDim * 0.055)));
+  const cur = tg.getToolConfiguration(csTools.CrosshairsTool.toolName) || {};
+  if (Math.abs((cur.handleRadius || 0) - r) < 0.05 && cur.referenceLinesCenterGapRadius === gap) return;
+  tg.setToolConfiguration(csTools.CrosshairsTool.toolName, { handleRadius: r, referenceLinesCenterGapRadius: gap });
+  if (state.crosshairs) for (const id of MPR_IDS) { try { state.engine.getViewport(id).render(); } catch (e) { /* nada */ } }
+}
+
 /** Compone las vistas VISIBLES en un PNG (como «Captura» de VOXEL). */
-export function screenshot(visibleIds) {
+export function screenshot(visibleIds, marca = null) {
   const canvases = visibleIds.map((id) => state.engine.getViewport(id).getCanvas()).filter(Boolean);
   if (!canvases.length) return null;
-  if (canvases.length === 1) return canvases[0].toDataURL('image/png');
-  const cols = canvases.length === 2 ? 2 : 2, rows = Math.ceil(canvases.length / cols);
-  const w = Math.max(...canvases.map((c) => c.width)), h = Math.max(...canvases.map((c) => c.height));
-  const out = document.createElement('canvas'); out.width = w * cols; out.height = h * rows;
-  const ctx = out.getContext('2d');
-  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg').trim() || '#000';
-  ctx.fillRect(0, 0, out.width, out.height);
-  canvases.forEach((c, i) => ctx.drawImage(c, (i % cols) * w, Math.floor(i / cols) * h));
+  let out, ctx;
+  if (canvases.length === 1) {
+    out = document.createElement('canvas'); out.width = canvases[0].width; out.height = canvases[0].height;
+    ctx = out.getContext('2d');
+    ctx.drawImage(canvases[0], 0, 0);
+  } else {
+    const cols = 2, rows = Math.ceil(canvases.length / cols);
+    const w = Math.max(...canvases.map((c) => c.width)), h = Math.max(...canvases.map((c) => c.height));
+    out = document.createElement('canvas'); out.width = w * cols; out.height = h * rows;
+    ctx = out.getContext('2d');
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg').trim() || '#000';
+    ctx.fillRect(0, 0, out.width, out.height);
+    canvases.forEach((c, i) => ctx.drawImage(c, (i % cols) * w, Math.floor(i / cols) * h));
+  }
+  stampWatermark(out, marca);
   return out.toDataURL('image/png');
+}
+
+/** MARCA DE AGUA: el logotipo abajo a la derecha, translúcido (v0.7.5). */
+export function stampWatermark(out, marca) {
+  if (!marca || !marca.complete || !marca.naturalWidth) return;
+  const ctx = out.getContext('2d');
+  const mw = Math.max(90, Math.round(out.width * 0.16));
+  const mh = Math.round((mw * marca.naturalHeight) / marca.naturalWidth);
+  const pad = Math.round(out.width * 0.015);
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.drawImage(marca, out.width - mw - pad, out.height - mh - pad, mw, mh);
+  ctx.restore();
 }
 
 // ------------------------------------------------------------------ cortes de ATM (port del panel de VOXEL)
@@ -1341,23 +1402,29 @@ export async function buildTmj(seeds, onStatus, aspect = 1.35) {
   const thr = autoThresholds(state.sorted).bone;
   const smp = tmjSampler(state.volume, sliceGetter());
   const poles = {}, series = {};
+  // LÍNEA MEDIA del paciente: punto medio entre los dos cóndilos marcados (si solo hay uno, el centro del
+  // volumen). Decide cuál de los dos polos es el MEDIAL; antes se suponía x = 0 y en los CBCT cuyo origen
+  // está en una esquina salían cambiados los del lado derecho (v0.7.6).
+  const bnds = state.volume.imageData.getBounds();
+  const midX = (seeds.R && seeds.L) ? (seeds.R[0] + seeds.L[0]) / 2 : (bnds[0] + bnds[1]) / 2;
   for (const sd of ['R', 'L']) {
     if (!seeds[sd]) continue;
     if (onStatus) onStatus('condyle', sd);
     await new Promise((r) => setTimeout(r, 0));
-    const pole = refineCondyle(smp, seeds[sd], thr);
+    const pole = refineCondyle(smp, seeds[sd], thr, midX);
     if (!pole) return null;
+    pole.axiBase = bestAxialOffset(smp, pole, thr);     // el axial, a la altura de la cabeza (v0.7.8)
     poles[sd] = pole;
     if (onStatus) onStatus('slices', sd);
     await new Promise((r) => setTimeout(r, 0));
     const step = Math.min(0.14, Math.max(0.07, Math.min(...state.volume.spacing) / 3));   // v0.7.3: más fino (se veían borrosos)
     series[sd] = condyleSeries(smp, pole, step, { sag: 0, cor: 0, axi: 0 }, aspect);
     poles[sd].step = step;
-    console.log(`tresD ATM ${sd}: ${pole.n} vóxeles de hueso · polos ${pole.med.map((v) => v.toFixed(1))} / ${pole.lat.map((v) => v.toFixed(1))} · ancho ${Math.hypot(pole.lat[0] - pole.med[0], pole.lat[1] - pole.med[1], pole.lat[2] - pole.med[2]).toFixed(1)} mm`);
+    console.log(`tresD ATM ${sd}: ${pole.n} vóxeles de hueso · polos ${pole.med.map((v) => v.toFixed(1))} / ${pole.lat.map((v) => v.toFixed(1))} · ancho ${Math.hypot(pole.lat[0] - pole.med[0], pole.lat[1] - pole.med[1], pole.lat[2] - pole.med[2]).toFixed(1)} mm · axial a ${pole.axiBase} mm del centro`);
   }
   if (!Object.keys(series).length) return null;
   state.tmj = {
-    poles, series, win: { ...state.mprWindow }, thr, smp, aspect: clampAspect(aspect),
+    poles, series, win: { ...state.mprWindow }, thr, smp, midX, aspect: clampAspect(aspect),
     shift: { R: { sag: 0, cor: 0, axi: 0 }, L: { sag: 0, cor: 0, axi: 0 } },
     meas: {},                                   // medidas por corte: clave `lado|familia|desplazamiento`
   };
@@ -1388,6 +1455,43 @@ export function scrollTmj(side, family, delta) {
     it.img = condyleSlice(tmj.smp, pole, family, it.off, step, tmj.aspect);
   }
   return next;
+}
+
+/**
+ * Corte AXIAL amplio a la altura del cóndilo, para colocar los POLOS a mano (como el panel de VOXEL).
+ * Devuelve { img, med, lat } con los polos ya en píxeles del corte.
+ */
+export function condyleAxialView(side, half = 30, step = 0.15, dz = 0) {
+  const tmj = state.tmj; if (!tmj || !tmj.poles[side]) return null;
+  const p = tmj.poles[side];
+  const img = samplePlane(tmj.smp, { c: [p.center[0], p.center[1], p.center[2] + dz], normal: [0, 0, 1], ux: [1, 0, 0], up: [0, -1, 0], half: [half, half], step });
+  // los polos se proyectan sobre ESTE corte (solo cambia la altura, así que el píxel es el mismo)
+  return { img, med: worldToPlane(img, p.med), lat: worldToPlane(img, p.lat), z: p.center[2] + dz, dz };
+}
+
+/**
+ * Coloca los POLOS de un cóndilo a mano (puntos del mundo) y rehace sus cortes. Devuelve el nuevo marco.
+ */
+export function setCondylePoles(side, med, lat, aspect) {
+  const tmj = state.tmj; if (!tmj || !tmj.poles[side]) return null;
+  const old = tmj.poles[side];
+  const pole = polesFrom(med, lat, old.n, old.apex, tmj.midX || 0);
+  pole.step = old.step;
+  pole.axiBase = bestAxialOffset(tmj.smp, pole, tmj.thr);
+  tmj.poles[side] = pole;
+  const step = pole.step || 0.2, a = aspect || tmj.aspect;
+  for (const it of tmj.series[side]) {
+    if (it.family === 'axi') { it.base = pole.axiBase; it.off = pole.axiBase + ((tmj.shift[side] || {}).axi || 0); }
+    it.img = condyleSlice(tmj.smp, pole, it.family, it.off, step, a);
+  }
+  for (const k of Object.keys(tmj.meas)) if (k.startsWith(side + '|')) delete tmj.meas[k];
+  silhouettes.redrawAll();
+  return pole;
+}
+/** Polos actuales de un lado (para deshacer). */
+export function getCondylePoles(side) {
+  const p = state.tmj && state.tmj.poles[side];
+  return p ? { med: p.med.slice(), lat: p.lat.slice() } : null;
 }
 
 /**
@@ -1480,12 +1584,13 @@ export async function buildPano(opts = {}, onStatus) {
     curve = raw && state.teeth ? archCurve(state.teeth) : null;
   }
   if (!curve) { state.pano = null; return null; }
-  const thickness = opts.thickness ?? (state.pano ? state.pano.thickness : 12), mip = opts.mip ?? (state.pano ? state.pano.mip : true);
+  const thickness = opts.thickness ?? (state.pano ? state.pano.thickness : 22), mip = opts.mip ?? (state.pano ? state.pano.mip : true);
   const image = buildPanoramic(state.volume, sliceGetter(), curve, { thickness, mip });
   // la ventana la propone la propia imagen (con MIP la de los cortes satura); si el usuario ya la ha
   // ajustado a mano en esta panorámica, se respeta
   const win = state.pano && state.pano.winTouched && state.pano.mip === mip ? state.pano.win : image.win;
-  state.pano = { curve, image, thickness, mip, win, winTouched: !!(state.pano && state.pano.winTouched && state.pano.mip === mip) };
+  const meas = state.pano ? state.pano.meas || [] : [];      // las medidas se conservan al cambiar grosor/MIP
+  state.pano = { curve, image, thickness, mip, win, meas, winTouched: !!(state.pano && state.pano.winTouched && state.pano.mip === mip) };
   silhouettes.redrawAll();
   return state.pano;
 }
@@ -1501,6 +1606,12 @@ export function movePanoControl(i, x, y) {
   silhouettes.redrawAll();
   return curve;
 }
+/** Medidas sobre la panorámica (en píxeles de la imagen; se conservan al cambiar grosor o MIP). */
+export function getPanoMeas() { return (state.pano && state.pano.meas) || []; }
+export function addPanoMeas(m) { if (state.pano) (state.pano.meas || (state.pano.meas = [])).push(m); return m; }
+export function setPanoMeas(list) { if (state.pano) state.pano.meas = list || []; }
+export function clearPanoMeas() { if (state.pano) state.pano.meas = []; }
+
 /** Curva de la arcada tal y como está (para deshacer). */
 export function getPanoControl() { return state.pano && state.pano.curve ? state.pano.curve.control.map((p) => p.slice()) : null; }
 export function setPanoControl(ctrl) {
@@ -1521,20 +1632,62 @@ export function setPanoEdit(on) {
   silhouettes.redrawAll();
 }
 
-/** Lleva el corte AXIAL a una altura concreta (mm, marco del paciente). Sin z, no hace nada. */
-export function jumpAxialToZ(z) {
-  if (!Number.isFinite(z) || !state.engine) return;
+/** Lleva un visor MPR a una coordenada concreta de su eje (0 = X, 1 = Y, 2 = Z; mm del paciente). */
+export function jumpViewportTo(vpId, axis, value) {
+  if (!Number.isFinite(value) || !state.engine) return;
   try {
-    const vp = state.engine.getViewport(VP.ax); if (!vp) return;
+    const vp = state.engine.getViewport(vpId); if (!vp) return;
     const cam = vp.getCamera();
-    const d = z - cam.focalPoint[2];
+    const d = value - cam.focalPoint[axis];
     if (Math.abs(d) < 1e-6) return;
-    vp.setCamera({
-      focalPoint: [cam.focalPoint[0], cam.focalPoint[1], cam.focalPoint[2] + d],
-      position: [cam.position[0], cam.position[1], cam.position[2] + d],
-    });
+    const fp = cam.focalPoint.slice(), po = cam.position.slice();
+    fp[axis] += d; po[axis] += d;
+    vp.setCamera({ focalPoint: fp, position: po });
     vp.render();
   } catch (e) { /* corte oblicuo o sin volumen */ }
+}
+/** Punto de mira actual de un visor MPR (mundo), o null. */
+export function viewportFocal(vpId) {
+  try { const vp = state.engine.getViewport(vpId); return vp ? vp.getCamera().focalPoint.slice() : null; } catch (e) { return null; }
+}
+
+/**
+ * Como `jumpViewportTo`, pero INSISTE hasta que el salto se queda puesto. Al cambiar de disposición,
+ * Cornerstone recoloca la cámara en el centro del volumen DESPUÉS de repartir el espacio, y se comía el
+ * salto (por eso el coronal no caía en los cóndidos al marcar la ATM, v0.7.6). Para en cuanto el corte
+ * aguanta 3 fotogramas o a los 900 ms.
+ */
+export function jumpViewportSticky(vpId, axis, value, ms = 900) {
+  if (!Number.isFinite(value)) return;
+  const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  let firm = 0;
+  const tick = () => {
+    jumpViewportTo(vpId, axis, value);
+    const f = viewportFocal(vpId);
+    firm = (f && Math.abs(f[axis] - value) < 0.5) ? firm + 1 : 0;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (firm < 3 && now - t0 < ms) requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+/** Lleva el corte AXIAL a una altura concreta (mm, marco del paciente). Sin z, no hace nada. */
+export function jumpAxialToZ(z) { jumpViewportTo(VP.ax, 2, z); }
+
+/**
+ * Estimación de DÓNDE están los cóndilos (mundo), para encuadrar el corte coronal antes de marcarlos.
+ * Si ya se ha calculado la panorámica, sus extremos caen justo en las ATM; si no, se usa una proporción
+ * de la caja del volumen (los cóndilos quedan atrás y arriba). Es solo una ayuda: el usuario ajusta con la rueda.
+ */
+export function condyleGuess() {
+  if (!state.volume) return null;
+  const b = state.volume.imageData.getBounds();
+  const x = (b[0] + b[1]) / 2;
+  if (state.pano && state.pano.curve && state.pano.curve.control.length > 2) {
+    const c = state.pano.curve.control;
+    return [x, (c[0][1] + c[c.length - 1][1]) / 2, state.pano.curve.z + 45];
+  }
+  return [x, b[2] + 0.68 * (b[3] - b[2]), b[4] + 0.70 * (b[5] - b[4])];
 }
 /** Ventana (brillo/contraste) PROPIA de la panorámica. */
 export function getPanoWindow() { return state.pano ? { ...state.pano.win } : { lower: 0, upper: 1 }; }

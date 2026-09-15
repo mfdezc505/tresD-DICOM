@@ -219,8 +219,31 @@
    `--overlay-text` es oscuro, así que antes no se leía (v0.7.2). */
 #grid .vp[data-id="vpAtm"] .atm-cell span { position: absolute; left: 3px; top: 2px; font-size: calc(10px * var(--fs));
   color: #fff; background: rgba(0,0,0,.62); padding: 0 4px; border-radius: 4px; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
-#grid .vp[data-id="vpAtm"] .atm-cell canvas { cursor: crosshair; touch-action: none; }
+#grid .vp[data-id="vpAtm"] .atm-cell canvas { cursor: default; touch-action: none; }
+/* la cruz de MEDIR solo aparece con Mayús pulsado (v0.7.5) */
+body.measuring-shift #grid .vp[data-id="vpAtm"] .atm-cell canvas,
+body.measuring-shift .modal.atm-big canvas,
+body.measuring-shift #grid .vp[data-id="vpPan"] canvas { cursor: crosshair; }
 #grid .vp[data-id="vpAtm"] .atm-cell.atm-gap { border: none; background: transparent; }
+/* botón de ampliar de cada corte: discreto, solo se ve al pasar por encima */
+#grid .vp[data-id="vpAtm"] .atm-cell .atm-zoom { position: absolute; right: 2px; top: 2px; width: 20px; height: 20px; padding: 0;
+  min-height: 0; line-height: 1; font-size: calc(11px * var(--fs)); opacity: 0; transition: opacity .12s; z-index: 2;
+  background: rgba(0,0,0,.55); color: #fff; border-color: rgba(255,255,255,.35); }
+#grid .vp[data-id="vpAtm"] .atm-cell:hover .atm-zoom { opacity: 1; }
+
+/* corte de ATM ampliado y ajuste de polos */
+.modal.atm-big { width: min(1100px, 94vw); max-width: none; gap: 8px; }
+.modal.atm-big .atm-big-head { display: flex; align-items: center; gap: 8px; }
+.modal.atm-big .atm-big-wrap { background: #000; border: 1px solid var(--border); border-radius: 8px; height: min(70vh, 720px);
+  display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.modal.atm-big canvas { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; cursor: default; touch-action: none; }
+.modal.poles { width: min(900px, 94vw); max-width: none; gap: 8px; }
+.modal.poles .poles-row { display: flex; gap: 10px; }
+.modal.poles .poles-one { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.modal.poles .poles-lbl { font-weight: 800; color: var(--accent); font-size: calc(13px * var(--fs)); }
+.modal.poles .poles-z { font-weight: 600; color: var(--text2); }
+.modal.poles canvas { width: 100%; aspect-ratio: 1; object-fit: contain; background: #000; border: 1px solid var(--border);
+  border-radius: 8px; cursor: crosshair; touch-action: none; }
 
 /* ---------------- vía aérea: tabla de valores en la tarjeta ---------------- */
 #vispanel .card.mesh .aw-values { border-top: 1px dashed var(--border); padding-top: 4px; font-size: calc(12px * var(--fs)); }

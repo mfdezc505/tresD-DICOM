@@ -51,7 +51,6 @@ export function buildLayout(root) {
     <div class="sidewrap left" id="wrap-left"><div class="hot"></div>
     <aside id="side" class="pane">
       <div class="phead"><h1 class="h1" data-i18n="step_import"></h1><button class="btn-ghost btn-icon pin" data-pin="left" data-i18n-title="pin_btn">⟨</button></div>
-      <div class="hint" data-i18n="import_hint"></div>
       <div id="side-drop" class="drop"><span data-i18n="drop_small" style="white-space:pre-line"></span></div>
       <div class="group" id="g1">
         <div class="gtitle" data-i18n="g1_title"></div>
@@ -64,29 +63,23 @@ export function buildLayout(root) {
       </div>
       <div class="group" id="g2">
         <div class="gtitle" data-i18n="g2_title"></div>
-        <div class="hint" data-i18n="g2_hint"></div>
         <button id="btn-mesh" class="btn-ghost big" data-i18n="upload_mesh"></button>
         <input id="in-mesh" type="file" accept=".stl,.ply,.obj" multiple hidden>
       </div>
       <div class="group hidden" id="g3">
         <div class="gtitle" data-i18n="g3_title"></div>
-        <div class="hint" data-i18n="g3_hint"></div>
         <button id="btn-seg" class="btn-ghost big" data-i18n="seg_btn"></button>
         <button id="btn-photo" class="btn-ghost big" data-i18n="photo_btn"></button>
         <input id="in-photo" type="file" accept="image/*" hidden>
-        <div class="hint" data-i18n="airway_hint"></div>
         <button id="btn-airway" class="btn-ghost big" data-i18n="airway_btn"></button>
-        <div class="hint" data-i18n="atm_hint"></div>
         <button id="btn-atm" class="btn-ghost big" data-i18n="atm_btn"></button>
       </div>
       <div class="group hidden" id="g-series">
         <div class="gtitle" data-i18n="series_title"></div>
-        <div class="hint" data-i18n="series_choose"></div>
         <div id="series-list" class="series-list"></div>
       </div>
       <div class="group hidden" id="g-tools">
         <div class="gtitle" data-i18n="tools_title"></div>
-        <div class="hint" data-i18n="cut_hint"></div>
         <div class="chkcol">
           <label class="chk"><input type="checkbox" id="cut-x"><span data-i18n="cut_sag"></span></label>
           <label class="chk"><input type="checkbox" id="cut-z"><span data-i18n="cut_axi"></span></label>
@@ -94,15 +87,11 @@ export function buildLayout(root) {
           <label class="chk"><input type="checkbox" id="cut-flip" disabled><span data-i18n="cut_flip"></span></label>
         </div>
         <input type="range" id="cut-slider" min="0" max="100" value="50" disabled>
-        <div class="hint" data-i18n="measure_hint"></div>
         <div class="tools">
           <button id="btn-dist" class="btn-ghost" aria-pressed="false" data-i18n="measure_dist"></button>
           <button id="btn-ang" class="btn-ghost" aria-pressed="false" data-i18n="measure_ang"></button>
           <button id="btn-clear" class="btn-ghost" data-i18n="measure_clear"></button>
         </div>
-        <div class="small" data-i18n="measure_where"></div>
-        <div class="small" data-i18n="mpr_help"></div>
-        <div class="small" data-i18n="render_help"></div>
       </div>
       <div class="hint" id="lbl-import" data-i18n="nothing_yet"></div>
     </aside>
@@ -119,10 +108,11 @@ export function buildLayout(root) {
         <div class="vp hidden" data-id="vpPan">
           <div class="pan-wrap"><canvas id="pan-canvas"></canvas></div>
           <div class="pan-bar">
-            <label data-i18n="pan_thick"></label><input type="range" id="pan-thick" min="1" max="30" value="12"><span id="pan-thick-val">12 mm</span>
+            <label data-i18n="pan_thick"></label><input type="range" id="pan-thick" min="1" max="40" value="22"><span id="pan-thick-val">22 mm</span>
             <label class="chk"><input type="checkbox" id="pan-mip" checked><span data-i18n="pan_mip"></span></label>
-            <label class="chk"><input type="checkbox" id="pan-curve" checked><span data-i18n="pan_curve"></span></label>
+            <label class="chk"><input type="checkbox" id="pan-curve"><span data-i18n="pan_curve"></span></label>
             <span class="spacer" style="flex:1"></span>
+            <button class="btn-ghost" id="pan-clear" data-i18n="atm_clear"></button>
             <button class="btn-ghost" id="pan-edit" aria-pressed="false" data-i18n="pan_edit" data-i18n-title="pan_edit_tip"></button>
             <button class="btn-ghost" id="pan-reset" data-i18n="pan_reset"></button>
           </div>
@@ -134,6 +124,7 @@ export function buildLayout(root) {
           <div class="atm-grid" id="atm-grid"></div>
           <div class="pan-bar">
             <span class="atm-legend" data-i18n="atm_legend"></span>
+            <button class="btn-ghost" id="atm-poles" data-i18n="atm_poles" data-i18n-title="atm_poles_tip"></button>
             <button class="btn-ghost" id="atm-clear" data-i18n="atm_clear"></button>
             <button class="btn-ghost" id="atm-redo" data-i18n="atm_redo"></button>
           </div>
@@ -202,7 +193,8 @@ export function buildLayout(root) {
 function vp(id, labelKey) {
   const orient = id === 'vp3d' ? '' : `<span class="orient t"></span><span class="orient b"></span><span class="orient l"></span><span class="orient r"></span>`;
   const bar = id === 'vp3d' ? `<div class="pa-bar hidden" id="pa-bar"><span id="pa-text"></span><button class="btn-ghost" id="pa-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="pa-cancel" data-i18n="dlg_cancel"></button></div>`
-    : id === 'vpSag' ? `<div class="pa-bar hidden" id="aw-bar"><span id="aw-text"></span><button class="btn-ghost" id="aw-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="aw-cancel" data-i18n="dlg_cancel"></button></div>` : '';
+    : id === 'vpSag' ? `<div class="pa-bar hidden" id="aw-bar"><span id="aw-text"></span><button class="btn-ghost" id="aw-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="aw-cancel" data-i18n="dlg_cancel"></button></div>`
+      : id === 'vpCor' ? `<div class="pa-bar hidden" id="atm-bar"><span id="atm-text"></span><button class="btn-ghost" id="atm-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="atm-cancel" data-i18n="dlg_cancel"></button></div>` : '';
   return `<div class="vp" data-id="${id}">
     <div class="cs" id="${id}" oncontextmenu="return false"></div>${bar}
     <span class="vplabel" data-i18n="${labelKey}"></span>

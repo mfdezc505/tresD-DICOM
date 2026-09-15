@@ -10,6 +10,8 @@
 //     la curva dentro del grosor elegido (suma de rayos, como los equipos comerciales).
 // Todo en el marco LPS del volumen (derecha del paciente = −X, anterior = −Y, superior = +Z).
 
+import { paintGray } from './tmj.js';
+
 const STEP = 0.4;            // mm por píxel (columnas y filas)
 const N_CONTROL = 13;        // puntos de control de la curva (los que se arrastran para editarla)
 // alto de la imagen respecto a la línea oclusal: hasta la basal por abajo y por encima de los CÓNDILOS
@@ -108,7 +110,7 @@ export function curveFrom(control, z) {
  * volume = volumen Cornerstone (imageData + voxelManager); opts = { thickness (mm), mip }.
  */
 export function buildPanoramic(volume, getSlice, curve, opts = {}) {
-  const T = Math.max(0.5, opts.thickness || 12), mip = !!opts.mip;
+  const T = Math.max(0.5, opts.thickness || 22), mip = !!opts.mip;
   const img = volume.imageData;
   const dims = img.getDimensions();
   const sp = Math.min(...volume.spacing);
@@ -178,15 +180,6 @@ function worldToIndexMatrix(img) {
 }
 
 /** Pinta la panorámica en un canvas con la ventana { lower, upper } (gris). */
-export function drawPanoramic(canvas, pan, win) {
-  canvas.width = pan.width; canvas.height = pan.height;
-  const g = canvas.getContext('2d');
-  const im = g.createImageData(pan.width, pan.height);
-  const lo = win.lower, rng = Math.max(1, win.upper - win.lower);
-  const d = im.data, src = pan.data;
-  for (let i = 0; i < src.length; i++) {
-    const v = Math.max(0, Math.min(255, Math.round(((src[i] - lo) / rng) * 255)));
-    d[4 * i] = v; d[4 * i + 1] = v; d[4 * i + 2] = v; d[4 * i + 3] = 255;
-  }
-  g.putImageData(im, 0, 0);
+export function drawPanoramic(canvas, pan, win, zoom = 1) {
+  paintGray(canvas, pan.width, pan.height, pan.data, win, zoom);
 }

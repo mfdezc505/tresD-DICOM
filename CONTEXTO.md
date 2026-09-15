@@ -494,7 +494,148 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   cambiar a la disposición ATM y al cambiar el tamaño de la ventana (con retardo). Además el remuestreo es
   más fino: paso 0,14 mm (0,2 antes), que es lo que hacía que se vieran borrosos al ampliarlos.
 
+## 2p. v0.7.4 (13-09-2026) — cruz adaptativa, ATM (medidas, corte ampliado, polos a mano) y panel limpio
+- **Cruz**: los CUADRADOS ya estaban apagados desde v0.7.1 (`getReferenceLineSlabThicknessControlsOn`), y se
+  ha comprobado con `tests/_dbg_cross2.mjs` que no se dibuja ni uno (0 `<rect>` con el ratón encima de una
+  línea). Lo que faltaba era el TAMAÑO: Cornerstone dibuja los mangos y el hueco central en PÍXELES FIJOS, así
+  que en «3D + cortes» o «en fila» salían enormes. `viewer.tuneCrosshairs()` los recalcula con el lado menor
+  de los cortes MPR visibles (radio entre 0,8 y 1,6 px; hueco entre 8 y 26 px) y se llama desde `resize()` y
+  desde `applyMprBindings()`.
+- **Medidas de ATM**: arrastrando se repintaba el mosaico ENTERO en cada movimiento del ratón (14 cortes,
+  `putImageData` en cada uno): iba a tirones y parecía que no funcionaba. Ahora `redrawTmj(cell)` repinta solo
+  el corte que se está midiendo.
+- **Corte de ATM ampliado**: botón ⤢ de cada casilla (o doble clic) → modal grande (`openAtmBig`) donde se
+  mide igual, la rueda cambia de corte y las medidas son LAS MISMAS que las del mosaico (mismo almacén, por
+  lado/familia/desplazamiento).
+- **Polos del cóndilo a mano** (`openPolesDialog`, botón «⌖ Ajustar polos»): corte AXIAL a la altura de cada
+  cóndilo (`viewer.condyleAxialView`) con los dos polos arrastrables; al aplicar, `viewer.setCondylePoles`
+  rehace el marco con `tmj.polesFrom` y vuelve a sacar los 7 cortes de ese lado (con deshacer/rehacer).
+  Para esto `samplePlane` devuelve ahora también el MARCO del plano (`o`, `ex`, `ey`), y `tmj.planeToWorld` /
+  `worldToPlane` convierten píxel ↔ mundo.
+- **Panel izquierdo**: fuera todos los textos explicativos de los pasos; quedan los títulos y los botones.
+- **Doble clic / ⤢ con un visor a pantalla completa**: vuelve al 2×2 (antes, si el visor ya estaba solo por la
+  barra de vistas, no hacía nada porque `maximized` estaba a null).
+
+## 2q. v0.7.5 (13-09-2026) — piel sin aire interno, medidas con Mayús, panorámica y marca de agua
+- **Edad del paciente** junto a la fecha de nacimiento, detrás del sexo (`patientAge` ya existía para la
+  norma de la vía aérea; ahora también va al chip de la barra).
+- **Piel sin vía aérea ni senos** (`segment.bodyField`, port de `segment_soft` de VOXEL): el contorno directo
+  al umbral de piel captaba TAMBIÉN el aire interno y salía como nubes al ver el blando translúcido. Ahora se
+  procesa la MÁSCARA: cierre morfológico de 4 mm (sella narinas, coanas y boca) → del aire se conserva solo el
+  EXTERIOR → mayor componente sólido → gaussiano de 1 vóxel → marching cubes a 0,5.
+  «Exterior» aquí es más estricto que en VOXEL: componentes de aire que TOCAN EL BORDE del volumen **y** que
+  llegan al 55 % del mayor de ellos (así la faringe, que sale por el borde de abajo pero es mucho menor, se
+  rellena). Con encuadres muy ajustados hay dos redes de seguridad: si el sólido pasa del 90 % se rellenan
+  solo los huecos cerrados, y si pasa del 95 % se deja la máscara como estaba. El morfológico va con máximo /
+  mínimo deslizante 1D en O(n) por eje (van Herk); etiquetado 6-conexo con cola propia. Resultado en el CBCT
+  de prueba: la malla de piel baja de 498.130 a 148.638 triángulos (todo lo que sobraba era interior).
+- **Panorámica**: grosor por defecto 22 mm (deslizador hasta 40) y, al entrar en «Editar curva», el axial
+  salta a la altura de los dientes DESPUÉS de cambiar de disposición (antes el cambio de tamaño del visor
+  deshacía el salto y había que buscar los dientes a mano).
+- **Medidas sobre cortes** (ATM y panorámica), v0.7.5:
+  · se mide con **MAYÚSCULAS + arrastrar** (el arrastre normal vuelve a ser brillo/contraste) y el cursor de
+    cruz solo aparece con Mayús pulsado (`body.measuring-shift`);
+  · la ETIQUETA del valor se arrastra (se guarda su desplazamiento en `m.lab`) y lleva una guía fina hasta la
+    medida cuando se separa;
+  · el tamaño de la etiqueta es FIJO EN PANTALLA: se divide por la escala del canvas (`canvasScale`), porque
+    antes se escalaba con la imagen y en el corte ampliado salían enormes y solapadas;
+  · la panorámica tiene sus propias medidas (`viewer.getPanoMeas` / `addPanoMeas`), que se conservan al
+    cambiar el grosor o el MIP, con su botón de borrar y deshacer/rehacer.
+- **Polos del cóndilo**: `tmj.polesFrom` intercambia los polos si hace falta para que MEDIAL sea siempre el
+  más cercano a la línea media (los rótulos salían cambiados en el lado derecho), y en el diálogo la RUEDA
+  del ratón sube y baja el corte axial ±20 mm (`condyleAxialView(side, half, step, dz)`), con el
+  desplazamiento escrito al lado del lado.
+- **Marcar los cóndilos**: se amplía el corte CORONAL a la altura estimada de las ATM (`viewer.condyleGuess`,
+  que usa los extremos de la curva panorámica si ya está calculada y, si no, una proporción de la caja del
+  volumen) y se apagan las siluetas de las mallas. El aviso con «deshacer / cancelar» tiene ahora su propia
+  barra en el coronal (`#atm-bar`), porque la de la vía aérea vive dentro del visor sagital.
+- **Marca de agua**: `viewer.screenshot(ids, img)` pinta el logotipo compacto abajo a la derecha al 55 % de
+  opacidad y al 16 % del ancho.
+
+## 2r. v0.7.6 (14-09-2026) — rótulos nítidos, el coronal sí salta a los cóndilos y polos con línea media real
+- **Rótulos y medidas NÍTIDOS sobre los cortes** (`tmj.paintGray`, usado por `drawSlice` y por
+  `drawPanoramic`): el canvas se pintaba con exactamente los píxeles del corte (p. ej. 216×243) y la pantalla
+  lo ampliaba ×3 en el modal, así que un rótulo de «11 px de pantalla» se dibujaba con 3,7 px de canvas y
+  salía borroso. Ahora se pinta con un factor de RESOLUCIÓN (`main.drawZoom` = escala en pantalla ×
+  devicePixelRatio, entre 1 y 6), se guarda en `canvas._imgZoom` y quien dibuja encima multiplica sus
+  coordenadas por él (`drawMeasures`, `measAtLabel`, el diálogo de polos) mientras que grosores y tipografía
+  siguen en píxeles de PANTALLA. `atmPos` divide por el factor, así que las medidas se siguen guardando en
+  píxeles del corte y no hay que tocar las ya hechas. La imagen se amplía con `drawImage` suavizado.
+- **El salto de corte se repite hasta que cuaja** (`viewer.jumpViewportSticky`): al cambiar de disposición,
+  Cornerstone recoloca la cámara en el CENTRO del volumen después de repartir el espacio, y se comía el
+  salto. Con dos `requestAnimationFrame` (v0.7.5) seguía llegando tarde: medido, el coronal se quedaba en
+  y = −55,8 (centro) en vez de y = −21,3 (cóndilos). Ahora se reintenta cada fotograma hasta que el valor
+  aguanta 3 seguidos o pasan 900 ms. Se usa también al entrar en «Editar curva» (axial a la altura dental).
+- **Línea media REAL para medial/lateral** (`tmj.polesFrom(..., midX)` y `refineCondyle(..., midX)`): se
+  suponía que la línea media era x = 0, pero muchos CBCT llevan el origen en una esquina y el volumen entero
+  cae en x > 0; entonces comparar |x| intercambiaba los polos del lado DERECHO (el izquierdo salía bien).
+  `buildTmj` calcula `midX` como el punto medio entre los dos cóndilos marcados (o el centro del volumen si
+  solo hay uno) y lo guarda en `state.tmj.midX` para cuando se ajustan a mano.
+
+## 2s. v0.7.7 (15-09-2026) — captura en panorámica y ATM, doble clic para ampliar y curva apagada
+- **Captura** (`main.shotPng` / `main.shotDom`): el botón solo sabía componer visores de CORNERSTONE
+  (`viewer.screenshot`), y con la panorámica o el mosaico de ATM en pantalla no hay ninguno visible, así que
+  devolvía null y el botón no hacía NADA. Ahora, si se ve el mosaico de ATM o la panorámica, la captura se
+  compone a partir de sus canvas: cada uno en el sitio y el tamaño en que se ve (`object-fit: contain`
+  resuelto a mano), más los rótulos de las casillas (pastilla oscura) y los de lado, que van en HTML y en
+  VERTICAL. La marca de agua se comparte con la captura normal (`viewer.stampWatermark`).
+- **Doble clic sobre un corte de ATM = ampliarlo**: había un `dblclick` en la rejilla, pero no llegaba nunca.
+  El `pointerdown` de la rejilla llama a `preventDefault()` para poder arrastrar el brillo sin seleccionar
+  texto, y cancelar `pointerdown` suprime los eventos de ratón de compatibilidad (mousedown/mouseup/click y,
+  por tanto, dblclick). Se detecta a mano: dos pulsaciones en la misma casilla en menos de 450 ms.
+- **Curva de la arcada apagada por defecto**: `state.showArch` arranca en false y la casilla «curva» sin
+  marcar. Entrar en «Editar curva» la enciende (allí hace falta).
+
+## 2t. v0.7.8 (15-09-2026) — curva apagada, marca de agua por tema, grosor en el axial, vía aérea, doble clic, axial de ATM
+- **Curva de la arcada**: apagada por defecto; «Editar curva» la enciende y al salir se vuelve al estado que
+  tenía la casilla antes (`archBeforeEdit` en `main.setPanoEdit`).
+- **Marca de agua** = logotipo principal «DICOM viewer» (`logo_main_dark|light.png`) en la versión del TEMA
+  activo (`main.watermark`): la de tema oscuro es clara y desaparecía en las capturas de fondo claro. Se
+  precargan las dos.
+- **Grosor de la panorámica sobre el axial** mientras se edita la curva: dos líneas finas a ±grosor/2 por la
+  normal 2D a la curva (callback `extra` de las siluetas en `viewer.js`); siguen al deslizador.
+- **BUG vía aérea** (desde v0.7.5): `awRestore` ocultaba `#atm-bar` en vez de `#aw-bar` (error de copia al
+  crear la barra de ATM), así que el aviso «VÍA AÉREA 2/2…» se quedaba puesto después de segmentar y
+  «Cancelar» no hacía nada (ya no había `airwayPick`). Arreglado; además `cancelAirway` oculta la barra
+  aunque no haya marcado en curso.
+- **Doble clic sobre la panorámica → 2×2** (cierra la edición si estaba abierta). No hacía falta detectar
+  el doble clic a mano: el `pointerdown` de la panorámica no cancela el evento salvo al medir.
+- **Axial de ATM a la altura de la CABEZA** (`tmj.bestAxialOffset`): el centro de los polos cae en lo alto
+  de la cabeza, y ahí el axial sale con la cabeza pegada a la fosa y al temporal (no se distingue el
+  cóndilo; en el DZ pasa igual). Se busca de +1 a −15 mm el nivel en que el hueso central es una MANCHA
+  AISLADA (componente 4-conexo que no toca el borde de la ventana de 36 mm, centroide a < 7 mm) y más
+  grande, midiendo la CAJA del componente (la cabeza es un anillo cortical con el interior esponjoso por
+  debajo del umbral; por área ganaba el cuello, macizo). En el DZ: derecha −4 mm, izquierda −9 mm. El
+  desplazamiento va en `pole.axiBase`; el rótulo y la rueda cuentan desde ahí (`it.base`), y se recalcula
+  al ajustar los polos a mano. `tests/_dbg_axi.mjs` vuelca la pila de axiales para verlo a ojo.
+
 ## 3. TRAMPAS descubiertas (no volver a caer)
+- **Al copiar una barra de aviso (#aw-bar → #atm-bar) revisar TODOS los selectores del flujo original**:
+  un `#atm-bar` en `awRestore` dejó el aviso de la vía aérea colgado durante tres versiones sin que ninguna
+  prueba lo viera (comprobaban las siluetas, no la barra). Toda barra de aviso debe tener una prueba de
+  «se oculta al terminar».
+- **`preventDefault()` en `pointerdown` mata el `click` y el `dblclick`** de ese elemento (se cancelan los
+  eventos de ratón de compatibilidad). Si hace falta arrastrar Y detectar dobles clics, hay que contarlos a
+  mano con el tiempo entre pulsaciones.
+- **`viewer.screenshot` solo ve los visores de Cornerstone**: la panorámica y el mosaico de ATM son canvas
+  propios; cualquier vista nueva que no sea un visor de Cornerstone hay que componerla aparte.
+- **La línea media del paciente NO es x = 0**: el origen DICOM puede estar en una esquina. Cualquier
+  izquierda/derecha o medial/lateral se decide comparando con el centro del volumen (o, mejor, con un punto
+  anatómico medio), nunca con el signo o el valor absoluto de x.
+- **Un canvas pintado a los píxeles de la imagen sale borroso al ampliarlo en pantalla**: lo que se dibuje
+  encima (rótulos, medidas) hay que pintarlo en un canvas a la resolución de la PANTALLA, no de la imagen.
+- **Cornerstone reencuadra la cámara al cambiar de disposición**, y lo hace más tarde de lo que parece: un
+  salto de corte hecho «después» con uno o dos `requestAnimationFrame` puede perderse igual. Hay que
+  reintentarlo hasta comprobar que el valor se queda puesto.
+- **Rellenar el aire «que no sea el mayor componente» falla con encuadres ajustados**: si la cabeza toca las
+  paredes del FOV, el aire exterior queda partido en bolsas y se rellena el volumen entero. Hay que partir de
+  los componentes que TOCAN EL BORDE y añadir una red de seguridad por fracción de sólido.
+- **Las etiquetas dibujadas sobre un canvas escalado con `object-fit: contain`** hay que dimensionarlas
+  dividiendo por la escala del canvas; si no, crecen con la imagen y se solapan.
+- **Cornerstone dibuja la cruz en píxeles de pantalla**, no en mm: hay que reajustar `handleRadius` y
+  `referenceLinesCenterGapRadius` cada vez que cambia el tamaño del visor.
+- **Repintar 14 canvas en cada `pointermove`** hace que arrastrar parezca que no responde: durante el arrastre,
+  repintar solo el que se está tocando.
 - **`enableHDPIHandles` de Cornerstone**: multiplica el radio de los mangos por `devicePixelRatio`; en un
   portátil retina se ven al doble de lo configurado.
 - **Un `<a download="…">` con tildes**: Chromium (y Windows) pueden descartar el nombre y guardar el archivo
@@ -548,6 +689,9 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   letra grande + inglés → **0 errores de consola**. `tests/tune.mjs`: variantes de sombreado.
 - `tests/loaders.mjs`: DICOMDIR, ZIP, RLE, JPEG 2000, sin signo (12 bits + intercepto) y `full` (0,25 mm →
   ruta de volumen grande) → todos cargan. `node tests/loaders.mjs <nombre>` ejecuta uno solo.
+- `tests/make_offset_geom.py`: copia `cbct_half/` desplazando el origen (+200 mm en X, +150 en Y) →
+  `cbct_offset/`, un CBCT cuyo volumen entero cae en x > 0. Prueba de que medial/lateral no se cambian
+  cuando la línea media no es x = 0 (`tests/v076.mjs`).
 - `tests/make_real_scans.py` (también vuelca `dz_half/dz_full.raw+json` para Node) + `tests/align_node.mjs`
   (Node, ~15 s) + `tests/real.mjs` (navegador, ~5 min):
   alineación con dientes REALES (auto y por puntos), siluetas, colores de mediciones y trazado en vivo,
