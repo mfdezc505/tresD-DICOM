@@ -150,10 +150,10 @@ replica la estrategia de VOXEL (`auto_align_scanner`), en JS puro:
 - (v0.4) Manuel probó con reales: el escáner quedaba delante del maxilar → rehecho en v0.6 (ver 2i).
 
 ## 2f. Contador de visitas y botones de subida (v0.4.0)
-- GoatCounter (`https://tresd-dicom.goatcounter.com/count`, constante `COUNTER` en main.js): gratis, sin
+- GoatCounter (`https://tresddicom.goatcounter.com/count`, constante `COUNTER` en main.js; cuenta creada por Manuel el 15-09-2026 con el código `tresddicom`, sin guion, v0.7.10): gratis, sin
   cookies, sin datos personales → sin banner RGPD. Se inyecta `gc.zgo.at/count.js` salvo en localhost/file:.
   Eventos anónimos: `evento-cbct` (CBCT cargado) y `evento-escaner`. Manuel debe crear la cuenta en
-  goatcounter.com con el código EXACTO `tresd-dicom` (si está ocupado, cambiar la constante).
+  goatcounter.com con el código EXACTO de la constante (si cambia el código, cambiar la constante).
   Decisión: NO login ni AdSense (fricción, RGPD, ingresos ínfimos); ver conversación 11-09-2026.
 - Botones de subida: el grupo «1 · Sube el CBCT» se oculta con un CBCT cargado; «2 · Escáner» con 2
   escáneres. Reaparecen al quitarlos con ✕ (`setHasCase`).

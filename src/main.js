@@ -1941,7 +1941,7 @@ function wireUI() {
 // ------------------------------------------------------------------ contador de visitas (GoatCounter)
 // Gratis, sin cookies y sin datos personales: no necesita banner de consentimiento. No cuenta en
 // localhost. Solo se registra la visita y dos eventos anónimos (CBCT cargado / escáner cargado).
-const COUNTER = 'https://tresd-dicom.goatcounter.com/count';
+const COUNTER = 'https://tresddicom.goatcounter.com/count';
 function initCounter() {
   if (!COUNTER || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) || location.protocol === 'file:') return;
   const sc = document.createElement('script');
