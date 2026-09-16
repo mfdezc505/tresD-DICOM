@@ -1392,7 +1392,10 @@ export function screenshot(visibleIds, marca = null) {
   return out.toDataURL('image/png');
 }
 
-/** MARCA DE AGUA: el logotipo abajo a la derecha, translúcido (v0.7.5). */
+/**
+ * MARCA DE AGUA: el logotipo abajo a la derecha (v0.7.5). Desde v0.7.17 va OPACA y con una sombra suave: con el
+ * 55 % de transparencia la imagen se veía a través y parecía que el corte quedaba por delante del logotipo.
+ */
 export function stampWatermark(out, marca) {
   if (!marca || !marca.complete || !marca.naturalWidth) return;
   const ctx = out.getContext('2d');
@@ -1400,7 +1403,8 @@ export function stampWatermark(out, marca) {
   const mh = Math.round((mw * marca.naturalHeight) / marca.naturalWidth);
   const pad = Math.round(out.width * 0.015);
   ctx.save();
-  ctx.globalAlpha = 0.55;
+  ctx.globalAlpha = 1;
+  ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = Math.max(4, Math.round(mw * 0.04)); ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   ctx.drawImage(marca, out.width - mw - pad, out.height - mh - pad, mw, mh);
   ctx.restore();
 }
@@ -1429,6 +1433,7 @@ export async function buildTmj(seeds, onStatus, aspect = 1.35) {
     await new Promise((r) => setTimeout(r, 0));
     const pole = refineCondyle(smp, seeds[sd], thr, midX);
     if (!pole) return null;
+    pole.side = sd;                                     // orientación de los sagitales (v0.7.17)
     pole.axiBase = bestAxialOffset(smp, pole, thr);     // el axial, a la altura de la cabeza (v0.7.8)
     poles[sd] = pole;
     if (onStatus) onStatus('slices', sd);
@@ -1492,7 +1497,7 @@ export function setCondylePoles(side, med, lat, aspect) {
   const tmj = state.tmj; if (!tmj || !tmj.poles[side]) return null;
   const old = tmj.poles[side];
   const pole = polesFrom(med, lat, old.n, old.apex, tmj.midX || 0);
-  pole.step = old.step;
+  pole.step = old.step; pole.side = old.side || side;
   pole.axiBase = bestAxialOffset(tmj.smp, pole, tmj.thr);
   tmj.poles[side] = pole;
   const step = pole.step || 0.2, a = aspect || tmj.aspect;

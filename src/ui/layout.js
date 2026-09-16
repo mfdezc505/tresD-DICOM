@@ -13,8 +13,9 @@ export function buildLayout(root) {
       <div id="patient-chip" class="hidden" data-i18n-title="pat_chip_tip"></div>
       <button id="btn-patient-edit" class="btn-ghost btn-icon hidden" data-i18n-title="pat_edit_tip">✎</button>
       <div class="spacer"></div>
-      <button id="btn-undo" class="btn-ghost hidden" data-i18n-title="undo_tip" disabled>↶ <span data-i18n="undo_btn"></span></button>
-      <button id="btn-redo" class="btn-ghost hidden" data-i18n-title="redo_tip" disabled>↷ <span data-i18n="redo_btn"></span></button>
+      <button id="btn-new" class="btn-ghost hidden" data-i18n="new_btn" data-i18n-title="new_tip"></button>
+      <button id="btn-undo" class="btn-ghost btn-icon hidden" data-i18n-title="undo_tip" disabled>↶</button>
+      <button id="btn-redo" class="btn-ghost btn-icon hidden" data-i18n-title="redo_tip" disabled>↷</button>
       <button id="btn-meta" class="btn-ghost hidden" data-i18n="meta_btn"></button>
       <button id="btn-shot" class="btn-ghost hidden">📷 <span data-i18n="shot_btn"></span></button>
       <button id="btn-rotate" class="btn-ghost hidden" aria-pressed="false">⟳ <span data-i18n="rotate_btn"></span></button>
@@ -69,8 +70,8 @@ export function buildLayout(root) {
       </div>
       <div class="group hidden" id="g3">
         <div class="gtitle" data-i18n="g3_title"></div>
-        <button id="btn-seg" class="btn-ghost big" data-i18n="seg_btn"></button>
         <button id="btn-photo" class="btn-ghost big" data-i18n="photo_btn"></button>
+        <button id="btn-seg" class="btn-ghost big" data-i18n="seg_btn"></button>
         <input id="in-photo" type="file" accept="image/*" hidden>
         <button id="btn-airway" class="btn-ghost big" data-i18n="airway_btn"></button>
         <button id="btn-atm" class="btn-ghost big" data-i18n="atm_btn"></button>
@@ -113,13 +114,15 @@ export function buildLayout(root) {
             <label class="chk"><input type="checkbox" id="pan-mip" checked><span data-i18n="pan_mip"></span></label>
             <label class="chk"><input type="checkbox" id="pan-curve"><span data-i18n="pan_curve"></span></label>
             <span class="spacer" style="flex:1"></span>
-            <button class="btn-ghost" id="pan-clear" data-i18n="atm_clear"></button>
+            <button class="btn-ghost" id="pan-len" aria-pressed="false" data-i18n="ab_len" data-i18n-title="ab_len_tip"></button>
+            <button class="btn-ghost" id="pan-ang" aria-pressed="false" data-i18n="ab_ang" data-i18n-title="ab_ang_tip"></button>
+            <button class="btn-ghost hidden" id="pan-clear" data-i18n="atm_clear"></button>
             <button class="btn-ghost" id="pan-edit" aria-pressed="false" data-i18n="pan_edit" data-i18n-title="pan_edit_tip"></button>
             <button class="btn-ghost" id="pan-draw" data-i18n="pan_draw" data-i18n-title="pan_draw_tip"></button>
             <button class="btn-ghost" id="pan-reset" data-i18n="pan_reset"></button>
           </div>
           <span class="vplabel" data-i18n="vp_pan"></span>
-          <span class="vpinfo" id="pan-info"></span>
+
           <span class="orient l">D</span><span class="orient r">I</span>
         </div>
         <div class="vp hidden" data-id="vpAtm">

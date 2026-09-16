@@ -241,9 +241,8 @@
 #grid .vp[data-id="vpAtm"] .atm-cell span { position: absolute; left: 3px; top: 2px; font-size: calc(10px * var(--fs));
   color: #fff; background: rgba(0,0,0,.62); padding: 0 4px; border-radius: 4px; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
 #grid .vp[data-id="vpAtm"] .atm-cell canvas { cursor: default; touch-action: none; }
-/* la cruz de MEDIR: en la panorámica con Mayús pulsado (v0.7.5); en el corte de ATM ampliado con un botón de
-   medida activo (v0.7.14) */
-body.measuring-shift #grid .vp[data-id="vpPan"] canvas,
+/* la cruz de MEDIR: con un botón de medida activo (ATM ampliado v0.7.14; panorámica v0.7.17) */
+#grid .vp[data-id="vpPan"] canvas.measuring,
 .modal.atm-big canvas.measuring { cursor: crosshair; }
 #grid .vp[data-id="vpAtm"] .atm-cell.atm-gap { border: none; background: transparent; }
 /* botón de ampliar de cada corte: discreto, solo se ve al pasar por encima */
@@ -282,6 +281,15 @@ body.measuring-shift #grid .vp[data-id="vpPan"] canvas,
 #btn-cross[aria-pressed="true"], #btn-rotate[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 
 /* ---------------- valoración (estrellas + comentario), v0.7.11 ---------------- */
+.modal.help { width: min(760px, 94vw); max-width: none; max-height: 90vh; gap: 10px; }
+.modal.help .help-head { display: flex; align-items: center; gap: 8px; }
+.modal.help .help-body { overflow-y: auto; min-height: 0; padding-right: 6px; display: flex; flex-direction: column; gap: 10px; }
+.modal.help .help-sec { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--seg-bg); }
+.modal.help .help-sec h4 { margin: 0 0 6px; color: var(--accent); font-size: calc(14px * var(--fs)); }
+.modal.help .help-sec ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
+.modal.help .help-sec li { font-size: calc(13px * var(--fs)); color: var(--text); line-height: 1.4; }
+.modal.help .help-sec li b { color: var(--text2); }
+.modal.help .help-about { font-size: calc(11.5px * var(--fs)); color: var(--muted); line-height: 1.45; padding: 4px 2px 0; }
 .modal.feedback { width: min(460px, 94vw); gap: 10px; }
 .modal.feedback .fb-stars { display: flex; justify-content: center; gap: 6px; margin: 6px 0; }
 .modal.feedback .fb-star { font-size: 34px; line-height: 1; background: none; border: none; cursor: pointer; color: var(--border); padding: 2px 4px; min-height: 0; transition: color .1s, transform .1s; }

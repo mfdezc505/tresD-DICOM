@@ -163,7 +163,55 @@ export function refineCondyle(smp, seed, thr, midX = 0) {
   const pA = mean(order.slice(0, k)), pB = mean(order.slice(-k));
   // MEDIAL = el polo más cerca de la LÍNEA MEDIA del paciente; LATERAL = el otro
   const [med, lat] = Math.abs(pA[0] - midX) <= Math.abs(pB[0] - midX) ? [pA, pB] : [pB, pA];
-  return polesFrom(med, lat, use.length, apex, midX);
+  const first = polesFrom(med, lat, use.length, apex, midX);
+  // v0.7.17: esos polos salen de la parte ALTA de la cabeza (cerca del ápice), que es estrecha, y a menudo
+  // caían fuera del hueso al proyectarlos. Los polos de verdad son los extremos medial y lateral de la
+  // sección axial MÁS ANCHA de la cabeza: se busca ese nivel y se toman los extremos del contorno del hueso.
+  const wide = polesAtWidest(smp, first, thr, midX);
+  if (!wide) return first;
+  // solo se acepta si es COHERENTE con la primera estimación: al menos tan ancho (la sección más ancha no
+  // puede ser más estrecha que la parte alta) y con el eje en una dirección parecida. Si no, la mancha era
+  // otra cosa (cuello, coronoides, temporal) y se conservan los polos de siempre.
+  const w0 = Math.hypot(lat[0] - med[0], lat[1] - med[1]), w1 = Math.hypot(wide.lat[0] - wide.med[0], wide.lat[1] - wide.med[1]);
+  const d0 = norm([lat[0] - med[0], lat[1] - med[1], 0]), d1 = norm([wide.lat[0] - wide.med[0], wide.lat[1] - wide.med[1], 0]);
+  // (la parte alta suele estar pegada a la fosa y su eje sale sesgado: se toleran hasta 50° de diferencia)
+  if (w1 < 0.85 * w0 || Math.abs(dot(d0, d1)) < Math.cos((50 * Math.PI) / 180)) return first;
+  return polesFrom(wide.med, wide.lat, use.length, apex, midX);
+}
+
+/**
+ * Polos medial y lateral sobre el CONTORNO de la sección axial más ancha de la cabeza del cóndilo: nivel de
+ * `bestAxialOffset`, componente aislado de hueso, eje por PCA (limitado a 45° de la horizontal) y los
+ * extremos del componente a lo largo de ese eje (media de los 3 píxeles más extremos). null si no hay mancha.
+ */
+export function polesAtWidest(smp, pole, thr, midX = 0) {
+  const off = bestAxialOffset(smp, pole, thr);
+  const st = 0.3, half = 18;
+  const img = samplePlane(smp, { c: addS(pole.center, SI, off), normal: SI, ux: LEFT, up: ANT, half: [half, half], step: st });
+  const pix = isolatedBlob(img, thr, 7 / st, true);
+  if (!pix || pix.length < 40) return null;
+  const w = img.w;
+  const pts = pix.map((i) => [i % w, Math.floor(i / w)]);
+  let cx = 0, cy = 0; for (const p of pts) { cx += p[0]; cy += p[1]; } cx /= pts.length; cy /= pts.length;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const p of pts) { const a = p[0] - cx, b = p[1] - cy; sxx += a * a; sxy += a * b; syy += b * b; }
+  const tr = sxx + syy, dt = sxx * syy - sxy * sxy;
+  const l1 = tr / 2 + Math.sqrt(Math.max(0, (tr * tr) / 4 - dt));
+  let ax = Math.abs(sxy) > 1e-9 ? [l1 - syy, sxy] : (sxx >= syy ? [1, 0] : [0, 1]);
+  const ln = Math.hypot(ax[0], ax[1]) || 1; ax = [ax[0] / ln, ax[1] / ln];
+  if (ax[0] < 0) ax = [-ax[0], -ax[1]];
+  const ang = Math.atan2(ax[1], ax[0]), lim = Math.PI / 4;
+  if (Math.abs(ang) > lim) ax = [Math.cos(Math.sign(ang) * lim), Math.sin(Math.sign(ang) * lim)];
+  const proj = pts.map((p) => (p[0] - cx) * ax[0] + (p[1] - cy) * ax[1]);
+  const order = pts.map((_, i) => i).sort((a, b) => proj[a] - proj[b]);
+  const k = Math.min(3, order.length);
+  // los polos van SOBRE la recta del eje (centroide ± extensión): así el segmento medial-lateral tiene
+  // exactamente la dirección del eje y no la que marquen dos píxeles sueltos del contorno
+  const ext = (list) => list.reduce((s, i) => s + proj[i], 0) / list.length;
+  const eA = ext(order.slice(0, k)), eB = ext(order.slice(-k));
+  const pA = planeToWorld(img, cx + ax[0] * eA, cy + ax[1] * eA), pB = planeToWorld(img, cx + ax[0] * eB, cy + ax[1] * eB);
+  const [med, lat] = Math.abs(pA[0] - midX) <= Math.abs(pB[0] - midX) ? [pA, pB] : [pB, pA];
+  return { med, lat, off };
 }
 
 /**
@@ -223,12 +271,13 @@ export function bestAxialOffset(smp, pole, thr) {
  * Tamaño (área de su caja, px²) del mayor componente 4-conexo de hueso que NO toca el borde y cuyo centroide
  * cae a menos de `rad` px del centro; 0 si no hay. Se mide la CAJA y no el área: la cabeza es un anillo
  * cortical con el interior esponjoso por debajo del umbral, y por área ganaba el cuello (macizo y más abajo).
+ * Con `pixels = true` devuelve los índices de los píxeles de ese componente (null si no hay) (v0.7.17).
  */
-function isolatedBlob(img, thr, rad) {
+function isolatedBlob(img, thr, rad, pixels = false) {
   const { w, h, data } = img;
   const lab = new Int32Array(w * h);
   const qx = new Int32Array(w * h);
-  let best = 0, next = 0;
+  let best = 0, next = 0, bestPix = null;
   for (let s0 = 0; s0 < w * h; s0++) {
     if (lab[s0] || data[s0] < thr) continue;
     next++;
@@ -245,9 +294,9 @@ function isolatedBlob(img, thr, rad) {
     if (border) continue;
     const dc = Math.hypot(sx / area - w / 2, sy / area - h / 2);
     const box = (x1 - x0 + 1) * (y1 - y0 + 1);
-    if (dc <= rad && box > best) best = box;
+    if (dc <= rad && box > best) { best = box; if (pixels) bestPix = Array.from(qx.subarray(0, tail)); }
   }
-  return best;
+  return pixels ? bestPix : best;
 }
 
 /** Un solo corte del cóndilo: family = 'sag' (⊥ al eje medio-lateral) | 'cor' | 'axi'; off en mm. */
@@ -256,7 +305,9 @@ export function condyleSlice(smp, pole, family, off, step = 0.2, aspect = 1.35) 
   const half = (h) => [(h * a) / 2, h / 2];
   if (family === 'cor') return samplePlane(smp, { c: addS(c, ap, off), normal: ap, ux: LEFT, up: SI, half: half(H), step });
   if (family === 'axi') return samplePlane(smp, { c: addS(c, SI, off), normal: SI, ux: LEFT, up: ANT, half: half(AXH), step });
-  return samplePlane(smp, { c: addS(c, ml, off), normal: ml, ux: [0, 1, 0], up: SI, half: half(H), step });
+  // sagitales: cada cóndilo visto desde SU lado. El izquierdo lleva posterior a la derecha de la imagen
+  // (ux = +Y); el derecho, al revés (v0.7.17, petición de Manuel: anterior a la derecha)
+  return samplePlane(smp, { c: addS(c, ml, off), normal: ml, ux: pole.side === 'R' ? [0, -1, 0] : [0, 1, 0], up: SI, half: half(H), step });
 }
 
 /** Prepara el muestreador una vez para todo el panel. */

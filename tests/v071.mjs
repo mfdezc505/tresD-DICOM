@@ -60,7 +60,7 @@ const cfg = await ev(() => {
   const tool = T.ToolGroupManager.getToolGroup('tg-mpr').getToolInstance(T.CrosshairsTool.toolName);
   return { r: tool.configuration.handleRadius, gap: tool.configuration.referenceLinesCenterGapRadius, slab: tool._getReferenceLineSlabThicknessControlsOn('vpAx') };
 });
-check(cfg.r > 0.5 && cfg.r <= 1.7, `radio de los mangos ${cfg.r.toFixed(2)} px (desde v0.7.4 se adapta al visor; 3 de fábrica)`);
+check(cfg.r >= 2.5 && cfg.r <= 4, `radio de los mangos ${cfg.r.toFixed(2)} px (2,5–4 desde v0.7.13; 3 de fábrica)`);
 check(cfg.slab === false, 'cuadrados de grosor de corte desactivados');
 // en el SVG del corte coronal solo debe haber círculos de giro, ningún rectángulo de mango
 await page.mouse.move(400, 400); await sleep(400);

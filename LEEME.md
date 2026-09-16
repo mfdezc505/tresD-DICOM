@@ -3,7 +3,7 @@
 Visor web de CBCT con la interfaz de VOXEL. Todo se procesa **en el navegador**: los archivos DICOM
 nunca salen de tu ordenador.
 
-## Qué hace (v0.7.15)
+## Qué hace (v0.7.17)
 - Abre carpetas DICOM, DICOMDIR y ZIP (arrastrar o botones). Detecta las series y deja elegir. Repara solo
   las series mal escritas: tamaño de vóxel incoherente y **bloques de cortes colocados fuera de sitio** (la
   parte alta del cráneo saliendo suelta por debajo del resto); avisa en la barra de estado cuando lo hace.
@@ -19,15 +19,15 @@ nunca salen de tu ordenador.
   activado por defecto, curva dibujada sobre el axial y **editable** («✎ Editar curva»: se arrastran los 13
   puntos amarillos sobre el corte axial (el axial se coloca solo a la altura de los dientes y dos líneas finas marcan el grosor del corte) y la panorámica se rehace; «↺ Curva automática» la recalcula);
   «✏ Dibujar curva» permite marcar la curva a mano con clics sobre el corte axial (de un cóndilo al otro por los dientes);
-  brillo/contraste arrastrando sobre la imagen. **Mayús + arrastrar = medir** (en mm, con la etiqueta
-  arrastrable); grosor por defecto 22 mm.
+  brillo/contraste arrastrando sobre la imagen. **Medir** con los botones «📏 Distancia» (dos toques) y
+  «📐 Ángulo» (tres toques), con la etiqueta arrastrable; grosor por defecto 22 mm.
 - **Cortes de ATM**: marcas un punto sobre cada cóndilo y el visor busca la cabeza condilar, calcula su eje
   entre polos y saca, por lado, 5 cortes sagitales perpendiculares a ese eje **a 1 mm** (de medial a lateral),
   1 coronal y 1 axial (este a la altura de la cabeza del cóndilo, ya separada de la fosa), en un mosaico (como el panel de ATM de VOXEL). La **rueda del ratón** recorre los
   cortes de milímetro en milímetro (sobre un sagital mueve los cinco; sobre el coronal o el axial, solo ese).
   **Arrastrar = brillo/contraste**. Los cortes se encuadran solos a la casilla del mosaico. Cada corte se
   puede **ver en grande** (doble clic sobre él o botón ⤢ de la casilla) y ahí se **mide** con los botones
-  «📏 Distancia» (arrastrar) y «📐 Ángulo» (tres toques: extremo, vértice, extremo), sin teclas: vale para
+  «📏 Distancia» (dos toques) y «📐 Ángulo» (tres toques: extremo, vértice, extremo), sin teclas: vale para
   tabletas. Las medidas (en mm o grados, con su color y deshacer/rehacer; «⌫ Borrar medidas» las quita) se ven
   también en el mosaico, más pequeñas, y sus etiquetas se pueden arrastrar.
   Si los polos del cóndilo no quedan bien, **«⌖ Ajustar polos»** los coloca a mano sobre un corte axial y
@@ -42,6 +42,8 @@ nunca salen de tu ordenador.
   color y trazado en vivo mientras mueves el ratón.
 - Corte del volumen por plano sagital / axial / coronal, con «voltear lado».
 - Planos MPR dentro del render 3D (panel derecho).
+- «✚ Nuevo caso» (cabecera) cierra todo y vuelve a la pantalla inicial, con confirmación. Botón «?» con la
+  **ayuda completa** por secciones (ES / EN).
 - Chip del paciente en la cabecera (nombre · sexo · nacimiento y edad · fecha del estudio): un **clic lo
   oculta** (docencia, capturas) y otro lo muestra; el lápiz ✎ permite **editar nombre, sexo y nacimiento**
   solo para la sesión (el archivo DICOM no se modifica).

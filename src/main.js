@@ -4,13 +4,13 @@ import './app.css';
 import { loadLang, setLang, getLang, t, applyI18n } from './i18n/i18n.js';
 import { buildLayout, orientationLetters, meshCard } from './ui/layout.js';
 import { buildMetadata, renderTable, exportJSON, exportCSV, download, updateSummaryPatient } from './ui/metadata.js';
+import { openHelp } from './ui/help.js';
 import { openFeedback, scheduleFeedback, feedbackState } from './ui/feedback.js';
 import { collectFromDataTransfer, collectFromFileList, expandZips, scanDicom, fmtDate } from './core/dicomLoad.js';
 import { isMeshName, guessRole, readMesh } from './core/meshes.js';
 import { GUIDED_POINTS } from './core/drape.js';
 import { showLegal, termsAccepted } from './ui/legal.js';
 import * as V from './core/viewer.js';
-import { VERSION } from './version.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -187,7 +187,7 @@ function setProgress(p) {
 /** Muestra u oculta la interfaz del caso. Con solo escáneres (sin CBCT) únicamente tiene sentido el visor 3D. */
 function setHasCase() {
   const vol = !!current, has = V.hasCase();
-  for (const sel of ['#btn-shot', '#btn-rotate', '#view-bar', '#wrap-right', '#g-tools', '#btn-undo', '#btn-redo']) $(sel).classList.toggle('hidden', !has);
+  for (const sel of ['#btn-shot', '#btn-rotate', '#view-bar', '#wrap-right', '#g-tools', '#btn-undo', '#btn-redo', '#btn-new']) $(sel).classList.toggle('hidden', !has);
   for (const sel of ['#patient-chip', '#btn-patient-edit', '#btn-meta', '#vispanel .card.dicom', '#mpr-card', '#btn-cross']) $(sel).classList.toggle('hidden', !vol);
   $('#grid').classList.toggle('hidden', !has);
   $('#main-drop').classList.toggle('hidden', has);
@@ -527,6 +527,23 @@ function renderChip() {
   const chip = [s.patient, s.sex ? s.sex : '', nac, s.date ? fmtDate(s.date) : ''].filter(Boolean).join(' · ');
   el.textContent = chip || (s.desc || '');
 }
+/**
+ * «Nuevo caso» (v0.7.16): confirmación y RECARGA de la página. Es la forma más segura de dejar el visor como
+ * al abrirlo (volumen, mallas, panorámica, ATM, vía aérea, historial, memoria gráfica); los ajustes del usuario
+ * (tema, letra, idioma, paneles) viven en localStorage y se conservan. Nada sale del ordenador.
+ */
+function newCaseDialog() {
+  if (!V.hasCase()) return;
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal"><h3>${t('new_dlg_title')}</h3><div class="hint">${t('new_dlg_hint')}</div>
+    <div class="mrow"><button class="btn-ghost" id="dlg-cancel">${t('dlg_cancel')}</button>
+    <button class="btn-primary" style="width:auto;min-height:40px;padding:8px 22px" id="dlg-ok">${t('new_dlg_ok')}</button></div></div>`;
+  bg.querySelector('#dlg-cancel').addEventListener('click', () => bg.remove());
+  bg.addEventListener('click', (e) => { if (e.target === bg) bg.remove(); });
+  bg.querySelector('#dlg-ok').addEventListener('click', () => { setStatus(t('st_new_case')); location.reload(); });
+  document.body.appendChild(bg);
+}
+
 function editPatientDialog() {
   const s = current; if (!s) return;
   const iso = (d) => { const m = String(d || '').match(/^(\d{4})(\d{2})(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : ''; };
@@ -1235,10 +1252,9 @@ function redrawTmj(only) {
 // arrastrar = brillo/contraste (y mover etiquetas); las medidas se hacen en el corte AMPLIADO con los botones
 // «Distancia» (arrastrar) y «Ángulo» (tres toques: extremo, vértice, extremo). La etiqueta del valor se
 // arrastra y va en tamaño de pantalla; en el mosaico se reduce con el tamaño de la casilla (v0.7.14).
-// En la panorámica se sigue midiendo con Mayús + arrastrar.
+// En la panorámica igual, con sus botones «Distancia» / «Ángulo» (v0.7.17).
 let atmDrag = null;         // { cell, it, side, cv, mode: 'label', m, p0, lab0 } mientras se mueve una etiqueta del mosaico
 let atmMeasN = 0;
-let shiftDown = false;
 
 /**
  * Factor de RESOLUCIÓN con el que pintar un corte: píxeles de canvas por píxel de la imagen. Se pinta a los
@@ -1380,13 +1396,6 @@ function atmWheel(ev) {
   redrawTmj();
 }
 
-/** Mayús pulsado: cursor de cruz en las zonas donde se puede medir (panorámica). */
-function setShift(on) {
-  if (shiftDown === on) return;
-  shiftDown = on;
-  document.body.classList.toggle('measuring-shift', on);
-}
-
 /** Mosaico de ATM: pulsar sobre la ETIQUETA de una medida la agarra para moverla; lo demás es brillo/contraste. */
 function atmDown(ev) {
   const cell = ev.target.closest('.atm-cell:not(.atm-gap)'); if (!cell || !V.state.tmj || ev.button !== 0) return;
@@ -1465,7 +1474,8 @@ function openAtmBig(side, key) {
     const p = atmPos(cv, e);
     const lab = measAtLabel(V.getTmjMeas(side, it.family, it.off), cv, p);
     if (lab) atmBig.drag = { mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() };
-    else if (atmBig.tool === 'len') atmBig.drag = { mode: 'new', a: p, b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+    // distancia: DOS TOQUES (v0.7.16, tabletas); si en vez de soltar se arrastra, también vale (mode pasa a 'new')
+    else if (atmBig.tool === 'len') atmBig.drag = { mode: 'tap', p0: p, a: p, b: null, x: e.clientX, y: e.clientY, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
     else if (atmBig.tool === 'ang') atmBig.drag = { mode: 'tap', p0: p, x: e.clientX, y: e.clientY };
     else atmBig.drag = { mode: 'win', x: e.clientX, y: e.clientY, w: V.getTmjWindow() };
     try { cv.setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
@@ -1474,8 +1484,10 @@ function openAtmBig(side, key) {
   cv.addEventListener('pointermove', (e) => {
     if (!atmBig) return;
     const d = atmBig.drag;
-    if (atmBig.tool === 'ang') { atmBig.cur = atmPos(cv, e); if (atmBig.pts.length) drawAtmBig(); }
+    if (atmBig.tool === 'ang' || atmBig.tool === 'len') { atmBig.cur = atmPos(cv, e); if (atmBig.pts.length && !d) drawAtmBig(); }
     if (!d) return;
+    // distancia: si el primer toque se convierte en arrastre (> 8 px), se mide arrastrando como antes
+    if (d.mode === 'tap' && atmBig.tool === 'len' && !atmBig.pts.length && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8) d.mode = 'new';
     if (d.mode === 'win') {
       const w0 = d.w, ww = Math.max(20, (w0.upper - w0.lower) + (e.clientX - d.x) * 6), wl = (w0.upper + w0.lower) / 2 + (e.clientY - d.y) * 6;
       V.setTmjWindow({ lower: wl - ww / 2, upper: wl + ww / 2 }); redrawTmj();
@@ -1490,12 +1502,16 @@ function openAtmBig(side, key) {
     if (!atmBig || !atmBig.drag) return;
     const d = atmBig.drag; atmBig.drag = null;
     const it = atmBigItem(); if (!it) return;
-    if (d.mode === 'tap') {                       // ángulo: un toque (sin arrastre) añade un punto
+    if (d.mode === 'tap') {                       // un toque (sin arrastre) añade un punto: 2 para distancia, 3 para ángulo
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8) { drawAtmBig(); return; }
       atmBig.pts.push(d.p0);
-      if (atmBig.pts.length >= 3) {
-        const [a, v, b] = atmBig.pts; atmBig.pts = [];
-        addAtmMeas(side, it, { type: 'ang', a, v, b, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length], lab: [0, 0] });
+      const need = atmBig.tool === 'ang' ? 3 : 2;
+      if (atmBig.pts.length >= need) {
+        const pts = atmBig.pts; atmBig.pts = [];
+        const color = V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length];
+        if (atmBig.tool === 'ang') addAtmMeas(side, it, { type: 'ang', a: pts[0], v: pts[1], b: pts[2], color, lab: [0, 0] });
+        else if (Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) * it.img.step >= 1) addAtmMeas(side, it, { a: pts[0], b: pts[1], color, lab: [0, 0] });
+        else drawAtmBig();
       } else drawAtmBig();
       atmBigHint();
       return;
@@ -1521,7 +1537,7 @@ function setAtmBigTool(tool) {
 function atmBigHint() {
   if (!atmBig) return;
   const n = atmBig.pts.length;
-  const k = atmBig.tool === 'len' ? 'ab_hint_len' : atmBig.tool === 'ang' ? (n === 0 ? 'ab_hint_ang1' : n === 1 ? 'ab_hint_ang2' : 'ab_hint_ang3') : 'atm_big_hint';
+  const k = atmBig.tool === 'len' ? (n === 0 ? 'ab_hint_len' : 'ab_hint_len2') : atmBig.tool === 'ang' ? (n === 0 ? 'ab_hint_ang1' : n === 1 ? 'ab_hint_ang2' : 'ab_hint_ang3') : 'atm_big_hint';
   atmBig.bg.querySelector('#ab-hint').textContent = t(k);
 }
 function atmBigItem() {
@@ -1537,7 +1553,7 @@ function drawAtmBig() {
   const d = atmBig.drag;
   if (d && d.mode === 'new' && d.b) list.push({ a: d.a, b: d.b, color: d.color, live: true });
   const pts = atmBig.pts, color = V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length];
-  if (pts.length === 1) list.push({ a: pts[0], b: atmBig.cur || pts[0], color, live: true, noLabel: true });
+  if (pts.length === 1) list.push({ a: pts[0], b: atmBig.cur || pts[0], color, live: true, noLabel: atmBig.tool === 'ang' });   // distancia: con el valor en vivo
   else if (pts.length === 2) list.push({ type: 'ang', a: pts[0], v: pts[1], b: atmBig.cur || pts[1], color, live: true });
   drawMeasures(cv, list, it.img.step);
   atmBig.bg.querySelector('#ab-title').textContent = `${t(atmBig.side === 'R' ? 'atm_side_r' : 'atm_side_l')} · ${atmLabel(it)}`;
@@ -1637,6 +1653,8 @@ function openPolesDialog() {
 
 // ------------------------------------------------------------------ panorámica (corte curvo)
 let panBusy = false, panPending = null, panEdit = false, panDrag = null, panMeasDrag = null;
+// medir en la panorámica por TOQUES (v0.7.17): herramienta activa, puntos ya tocados y posición del puntero
+let panTool = null, panPts = [], panCur = null;
 
 /** Rehace la panorámica. Si ya se está calculando, encola la última petición (grosor en vivo). */
 async function showPanoramic(opts = {}) {
@@ -1661,8 +1679,31 @@ function drawPan() {
   V.drawPanoramic(cv, pano.image, w, drawZoom(cv, pano.image.width, pano.image.height));
   const list = V.getPanoMeas().slice();
   if (panMeasDrag && panMeasDrag.mode === 'new' && panMeasDrag.b) list.push({ a: panMeasDrag.a, b: panMeasDrag.b, color: panMeasDrag.color, live: true });
+  const color = V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length];
+  if (panPts.length === 1) list.push({ a: panPts[0], b: panCur || panPts[0], color, live: true, noLabel: panTool === 'ang' });
+  else if (panPts.length === 2) list.push({ type: 'ang', a: panPts[0], v: panPts[1], b: panCur || panPts[1], color, live: true });
   drawMeasures(cv, list, pano.image.step);
-  $('#pan-info').textContent = t('wl', { w: Math.round(w.upper - w.lower), l: Math.round((w.upper + w.lower) / 2) }) + ' · ' + pano.thickness + ' mm' + (pano.mip ? ' · MIP' : '');
+  $('#pan-clear').classList.toggle('hidden', !V.getPanoMeas().length);     // solo con medidas (v0.7.17)
+  // (la etiqueta «V · N · grosor · MIP» de la esquina se quitó en v0.7.16: se solapaba con la barra al editar la curva)
+}
+
+/** Herramienta de medida de la panorámica (null = brillo/contraste): «Distancia» 2 toques, «Ángulo» 3 toques. */
+function setPanTool(tool) {
+  panTool = tool; panPts = []; panMeasDrag = null;
+  $('#pan-len').setAttribute('aria-pressed', String(tool === 'len'));
+  $('#pan-ang').setAttribute('aria-pressed', String(tool === 'ang'));
+  $('#pan-canvas').classList.toggle('measuring', !!tool);
+  if (V.state.pano) drawPan();
+  setStatus(t(tool === 'len' ? 'st_pan_len' : tool === 'ang' ? 'st_pan_ang' : 'st_ready'));
+}
+/** Guarda una medida de la panorámica con deshacer/rehacer y su valor en la barra de estado. */
+function addPanMeas(m) {
+  V.addPanoMeas(m); atmMeasN++;
+  V.history.record({ label: 'pan_meas',
+    undo: () => { const l = V.getPanoMeas(); const i = l.indexOf(m); if (i >= 0) l.splice(i, 1); drawPan(); },
+    redo: () => { V.addPanoMeas(m); drawPan(); } });
+  refreshHistoryButtons(); drawPan();
+  setStatus(t(m.type === 'ang' ? 'st_pan_meas_ang' : 'st_pan_meas', { v: measText(m, V.state.pano.image.step) }));
 }
 
 /** Modo EDICIÓN de la curva: axial + panorámica a la vez y puntos de control arrastrables en el axial. */
@@ -1966,10 +2007,6 @@ function wireUI() {
   const tend = () => { if (tdrag) { tdrag = null; return; } atmUp(); };
   grid.addEventListener('pointerup', tend); grid.addEventListener('pointercancel', tend);
   // exportar mallas: botón del panel derecho y clic derecho sobre el propio panel
-  // Mayús pulsado = modo medir sobre la panorámica (solo entonces sale la cruz)
-  window.addEventListener('keydown', (e) => { if (e.key === 'Shift') setShift(true); });
-  window.addEventListener('keyup', (e) => { if (e.key === 'Shift') setShift(false); });
-  window.addEventListener('blur', () => setShift(false));
   $('#btn-export').addEventListener('click', exportMeshesDialog);
   $('#vispanel').addEventListener('contextmenu', (e) => {
     if (!V.getMeshes().length) return;
@@ -2046,27 +2083,29 @@ function wireUI() {
   let pdrag = null;
   // doble clic sobre la panorámica: vuelve al 2×2 (petición de Manuel, v0.7.8)
   $('#pan-canvas').addEventListener('dblclick', () => { if (panEdit) setPanoEdit(false); applyLayout('quad'); });
+  $('#pan-len').addEventListener('click', () => setPanTool(panTool === 'len' ? null : 'len'));
+  $('#pan-ang').addEventListener('click', () => setPanTool(panTool === 'ang' ? null : 'ang'));
+  // medir en la panorámica: SIN Mayús (v0.7.17): botón «Distancia» = 2 toques (o arrastrar), «Ángulo» = 3 toques;
+  // las etiquetas se arrastran siempre; sin botón, arrastrar = brillo/contraste
   $('#pan-canvas').addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     const cv = $('#pan-canvas');
     if (V.state.pano) {
       const p = atmPos(cv, e);
       const lab = measAtLabel(V.getPanoMeas(), cv, p);
-      if (e.shiftKey || lab) {                      // MEDIR (Mayús) o mover la etiqueta de una medida
-        panMeasDrag = lab
-          ? { mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() }
-          : { mode: 'new', a: p, b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
-        cv.setPointerCapture(e.pointerId); e.preventDefault();
-        return;
-      }
+      if (lab) panMeasDrag = { mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() };
+      else if (panTool) panMeasDrag = { mode: 'tap', p0: p, a: p, b: null, x: e.clientX, y: e.clientY, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+      if (panMeasDrag) { cv.setPointerCapture(e.pointerId); e.preventDefault(); return; }
     }
     pdrag = { x: e.clientX, y: e.clientY, w: V.getPanoWindow() }; e.target.setPointerCapture(e.pointerId);
   });
   $('#pan-canvas').addEventListener('pointermove', (e) => {
+    if (panTool && V.state.pano) { panCur = atmPos($('#pan-canvas'), e); if (panPts.length && !panMeasDrag) drawPan(); }
     if (panMeasDrag) {
       const p = atmPos($('#pan-canvas'), e), d = panMeasDrag;
+      if (d.mode === 'tap' && panTool === 'len' && !panPts.length && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8) d.mode = 'new';
       if (d.mode === 'label') d.m.lab = [d.lab0[0] + (p[0] - d.p0[0]), d.lab0[1] + (p[1] - d.p0[1])];
-      else d.b = p;
+      else if (d.mode === 'new') d.b = p;
       drawPan();
       return;
     }
@@ -2077,16 +2116,21 @@ function wireUI() {
   const pend = (e) => {
     if (panMeasDrag) {
       const d = panMeasDrag; panMeasDrag = null;
+      const step = V.state.pano.image.step;
+      if (d.mode === 'tap') {                       // un toque suelto añade un punto: 2 para distancia, 3 para ángulo
+        if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8) { drawPan(); return; }
+        panPts.push(d.p0);
+        const need = panTool === 'ang' ? 3 : 2;
+        if (panPts.length < need) { drawPan(); setStatus(t(panTool === 'ang' ? (panPts.length === 1 ? 'st_pan_ang2' : 'st_pan_ang3') : 'st_pan_len2')); return; }
+        const pts = panPts; panPts = [];
+        if (panTool === 'ang') addPanMeas({ type: 'ang', a: pts[0], v: pts[1], b: pts[2], color: d.color, lab: [0, 0] });
+        else if (Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) * step >= 1) addPanMeas({ a: pts[0], b: pts[1], color: d.color, lab: [0, 0] });
+        else drawPan();
+        return;
+      }
       if (d.mode === 'label' || !d.b) { drawPan(); return; }
-      const len = Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * V.state.pano.image.step;
-      if (len < 1) { drawPan(); return; }
-      const m = V.addPanoMeas({ a: d.a, b: d.b, color: d.color, lab: [0, 0] });
-      atmMeasN++;
-      V.history.record({ label: 'pan_meas',
-        undo: () => { const l = V.getPanoMeas(); const i = l.indexOf(m); if (i >= 0) l.splice(i, 1); drawPan(); },
-        redo: () => { V.addPanoMeas(m); drawPan(); } });
-      refreshHistoryButtons(); drawPan();
-      setStatus(t('st_pan_meas', { v: len.toFixed(1) }));
+      if (Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * step < 1) { drawPan(); return; }
+      addPanMeas({ a: d.a, b: d.b, color: d.color, lab: [0, 0] });
       return;
     }
     if (!pdrag) return; const w0 = pdrag.w, w1 = V.getPanoWindow(); pdrag = null; if (Math.abs(w0.lower - w1.lower) > 0.5 || Math.abs(w0.upper - w1.upper) > 0.5) V.history.record({ label: 'mprwin', undo: () => { V.setPanoWindow(w0); drawPan(); }, redo: () => { V.setPanoWindow(w1); drawPan(); } }); };
@@ -2113,8 +2157,9 @@ function wireUI() {
   $$('.legal-links a[data-legal]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); showLegal(a.dataset.legal, { onLang: afterLangChange }); }));
   $('#btn-feedback').addEventListener('click', () => openFeedback());
   $('#patient-chip').addEventListener('click', () => { if (!current) return; chipHidden = !chipHidden; renderChip(); });
+  $('#btn-new').addEventListener('click', newCaseDialog);
   $('#btn-patient-edit').addEventListener('click', editPatientDialog);
-  $('#btn-help').addEventListener('click', () => alert(t('help_text') + '\n\n' + t('about', { v: VERSION })));
+  $('#btn-help').addEventListener('click', openHelp);
   $('#btn-shot').addEventListener('click', () => {
     const url = shotPng();
     if (!url) return;
@@ -2184,7 +2229,7 @@ function wireUI() {
 
   // teclado: Escape cancela la medición / cierra metadatos; Ctrl+Z / Ctrl+Y (o Ctrl+Mayús+Z) deshacen / rehacen
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { if (V.state.measureMode) setMeasureMode(null); if (manualPick) { cancelManual(); setStatus(t('st_ready')); } if (pointAlign) cancelPointAlign(); if (airwayPick) cancelAirway(); if (tmjPick) cancelTmj(); if (panDraw) cancelPanDraw(); if (atmBig && atmBig.pts.length) { atmBig.pts = []; atmBigHint(); drawAtmBig(); } $('#meta-drawer').classList.remove('open'); }
+    if (e.key === 'Escape') { if (V.state.measureMode) setMeasureMode(null); if (manualPick) { cancelManual(); setStatus(t('st_ready')); } if (pointAlign) cancelPointAlign(); if (airwayPick) cancelAirway(); if (tmjPick) cancelTmj(); if (panDraw) cancelPanDraw(); if (atmBig && atmBig.pts.length) { atmBig.pts = []; atmBigHint(); drawAtmBig(); } if (panPts.length) { panPts = []; drawPan(); } $('#meta-drawer').classList.remove('open'); }
     const tag = (e.target && e.target.tagName) || '';
     if ((e.ctrlKey || e.metaKey) && !/INPUT|TEXTAREA|SELECT/.test(tag)) {
       const k = e.key.toLowerCase();

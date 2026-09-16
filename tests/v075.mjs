@@ -56,18 +56,15 @@ await sleep(1500);
 check((await ev(() => window.tresd.V.state.pano.thickness)) === 22, 'grosor de 22 mm por defecto (12 hasta v0.7.4)');
 check((await ev(() => document.querySelector('#pan-thick').value)) === '22', 'el deslizador arranca en 22');
 
-console.log('— medir en la panorámica (Mayús + arrastrar) y mover la etiqueta');
+console.log('— medir en la panorámica (botón «Distancia», dos toques; v0.7.17) y mover la etiqueta');
 const pBox = await page.locator('#pan-canvas').boundingBox();
-await page.keyboard.down('Shift');
-await page.mouse.move(pBox.x + pBox.width * 0.42, pBox.y + pBox.height * 0.45);
-await page.mouse.down();
-await page.mouse.move(pBox.x + pBox.width * 0.52, pBox.y + pBox.height * 0.55, { steps: 10 });
-await page.mouse.up();
-await page.keyboard.up('Shift');
-await sleep(400);
+await page.click('#pan-len'); await sleep(150);
+await page.mouse.click(pBox.x + pBox.width * 0.42, pBox.y + pBox.height * 0.45); await sleep(200);
+await page.mouse.click(pBox.x + pBox.width * 0.52, pBox.y + pBox.height * 0.55); await sleep(400);
 const pm = await ev(() => window.tresd.V.getPanoMeas().map((m) => ({ lab: m.lab, d: Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1]) })));
 check(pm.length === 1, `una medida en la panorámica (${pm.length})`);
 check(/mm/.test(await ev(() => document.querySelector('#status-text').textContent)), 'se muestra el valor en la barra de estado');
+await page.click('#pan-len'); await sleep(150);                 // herramienta apagada: arrastrar vuelve a ser brillo
 // sin Mayús, arrastrar sigue siendo brillo/contraste (no crea medidas)
 const w0 = await ev(() => window.tresd.V.getPanoWindow());
 await page.mouse.move(pBox.x + pBox.width * 0.3, pBox.y + pBox.height * 0.3);
@@ -76,8 +73,8 @@ await page.mouse.move(pBox.x + pBox.width * 0.4, pBox.y + pBox.height * 0.4, { s
 await page.mouse.up();
 await sleep(300);
 const w1 = await ev(() => window.tresd.V.getPanoWindow());
-check((await ev(() => window.tresd.V.getPanoMeas().length)) === 1, 'sin Mayús no se crean medidas');
-check(Math.abs(w1.upper - w0.upper) > 1, 'sin Mayús se sigue ajustando el brillo/contraste');
+check((await ev(() => window.tresd.V.getPanoMeas().length)) === 1, 'sin botón de medida no se crean medidas');
+check(Math.abs(w1.upper - w0.upper) > 1, 'sin botón, arrastrar sigue ajustando el brillo/contraste');
 // arrastrar la ETIQUETA del valor
 const lab0 = await ev(() => window.tresd.V.getPanoMeas()[0].lab.slice());
 const mid = await ev(() => { const m = window.tresd.V.getPanoMeas()[0]; return [(m.a[0] + m.b[0]) / 2 + m.lab[0], (m.a[1] + m.b[1]) / 2 + m.lab[1]]; });
@@ -189,11 +186,6 @@ await sleep(400);
 await page.click('#ab-close'); await sleep(300);
 check((await nMeas()) === 1, 'con el botón «Distancia» del corte ampliado sí se mide');
 check((await ev(() => { const k = Object.keys(window.tresd.V.getAllTmjMeas())[0]; return !!window.tresd.V.getAllTmjMeas()[k][0].lab; })), 'la medida guarda el desplazamiento de su etiqueta');
-// cursor de cruz solo con Mayús
-check((await ev(() => document.body.classList.contains('measuring-shift'))) === false, 'sin Mayús el cursor vuelve al normal');
-await page.keyboard.down('Shift'); await sleep(200);
-check((await ev(() => document.body.classList.contains('measuring-shift'))) === true, 'con Mayús se marca el modo medir');
-await page.keyboard.up('Shift');
 await shot('v075_atm_medida.png');
 
 console.log('— polos: medial hacia la línea media y rueda en el axial');

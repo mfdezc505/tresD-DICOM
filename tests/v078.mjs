@@ -124,10 +124,13 @@ const ax = await ev(() => {
   }
   return out;
 });
-// en el DZ, a la altura del centro de los polos la cabeza sale pegada a la fosa (no se distingue); el óvalo
-// limpio de la cabeza aparece entre 3 y 12 mm por debajo (comprobado a ojo con tests/_dbg_axi.mjs)
+// en el DZ, a la altura del centro de los polos CLÁSICOS la cabeza sale pegada a la fosa; el óvalo limpio
+// aparece entre 3 y 12 mm por debajo. Desde v0.7.17 los polos se llevan a esa sección más ancha cuando la
+// detección es coherente (lado L), así que el centro ya está ahí y el axial arranca a 0; en el lado R (muestra
+// pobre) se conservan los polos clásicos y el axial sigue bajando.
 for (const sd of ['R', 'L']) {
-  check(ax[sd].base <= -3 && ax[sd].base >= -12, `${sd}: el axial baja ${-ax[sd].base} mm desde el centro de los polos (cabeza separada de la fosa)`);
+  const onWide = Math.abs(ax[sd].base) <= 2;
+  check(onWide || (ax[sd].base <= -3 && ax[sd].base >= -12), `${sd}: el axial ${onWide ? 'arranca en la sección más ancha (polos v0.7.17)' : 'baja ' + (-ax[sd].base) + ' mm desde el centro de los polos (cabeza separada de la fosa)'}`);
   check(ax[sd].off === ax[sd].base && ax[sd].itBase === ax[sd].base, `${sd}: el corte del mosaico arranca en esa altura`);
 }
 await ev(() => window.tresd.renderTmj());

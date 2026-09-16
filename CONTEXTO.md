@@ -752,6 +752,52 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
 - Pruebas: `tests/v0715.mjs` (1, 2, 3, 7, 8), `v0714` (5: pestaña oculta con el panel abierto), `real.mjs`
   (6: pantalla completa al alinear y vuelta al 2×2 al cancelar), `photo.mjs` (4: 3 puntos).
 
+## 2z. v0.7.16 (16-09-2026) — Flechas de deshacer, «Nuevo caso», distancia ATM con 2 toques, sin V·N en panorámica, ventana de Ayuda
+- **↶ ↷** sin texto (`btn-icon`); el tooltip conserva «Deshacer (Ctrl+Z)». Sitio para el chip del paciente.
+- **«✚ Nuevo caso»** (`#btn-new`, cabecera, solo con caso): `newCaseDialog()` pide confirmación y hace
+  `location.reload()`: es la forma más limpia de vaciar Cornerstone, vtk, mallas, ATM, panorámica, vía aérea e
+  historial y liberar la memoria gráfica. Los ajustes (tema, letra, idioma, paneles, términos aceptados) viven
+  en localStorage y se conservan.
+- **ATM, distancia con DOS TOQUES** en el corte ampliado: `pointerdown` en modo `len` crea `drag.mode = 'tap'`
+  (con `a`); si antes de soltar se mueve > 8 px pasa a `'new'` (arrastre clásico, sigue valiendo); si se
+  suelta sin mover, `atmBig.pts` recoge el punto y el segundo toque crea la medida (vista previa en vivo con el
+  valor siguiendo al puntero; Esc cancela). Pistas `ab_hint_len` / `ab_hint_len2`.
+- **Panorámica**: quitada la etiqueta de esquina «V · N · grosor · MIP» (`#pan-info`): se solapaba con la barra
+  (ya con dos filas) al editar la curva.
+- **Ayuda**: `src/ui/help.js` → `openHelp()`: ventana `.modal.help` con la estética del visor (cabecera, pista,
+  cuerpo desplazable con 10 secciones en tarjetas y la nota `about` con versión y motores). El contenido está en
+  `i18n` como `help_sections` (array de `{ t, items: [[negrita, texto]…] }`, ES y EN); `t()` devuelve el array
+  tal cual. `help_text` (el antiguo alert) eliminado.
+- Prueba: `tests/v0716.mjs` (todo lo anterior; comprueba que no salta ningún `dialog` del navegador y que tras
+  «Nuevo caso» la página vuelve a la pantalla de importar con los ajustes intactos).
+
+## 2aa. v0.7.17 (16-09-2026) — Panorámica por toques, polos en la sección más ancha, sagitales derechos espejados, marca de agua opaca
+- **Panorámica sin Mayús**: botones «📏 Distancia» / «📐 Ángulo» (`#pan-len`, `#pan-ang`) en la barra;
+  `panTool`, `panPts`, `panCur`, `setPanTool`, `addPanMeas`. Misma mecánica que el ATM ampliado: toques (2 / 3),
+  arrastre también vale para la distancia, Esc cancela, vista previa en vivo, etiquetas arrastrables. Sin
+  botón, arrastrar = brillo/contraste. `setShift` / `measuring-shift` eliminados (Mayús ya no hace nada).
+  `#pan-clear` solo se ve con medidas (`drawPan`).
+- **Grupo 3**: «Subir foto frontal» antes de «Segmentar hueso y piel».
+- **Ayuda**: sección 11 «Requisitos mínimos del dispositivo» (navegador, ordenador, tabletas, archivos,
+  conexión) en ES y EN.
+- **Polos del cóndilo** (captura de Manuel: polos fuera del hueso): `refineCondyle` calculaba los extremos de
+  la parte ALTA de la cabeza (vóxeles a < 10 mm del ápice), estrecha, y al proyectarlos a otra altura caían
+  fuera. Ahora `polesAtWidest(smp, pole, thr, midX)`: nivel de `bestAxialOffset` (sección aislada más
+  grande), píxeles del componente (`isolatedBlob(..., true)`), PCA 2D limitada a 45° y extremos del contorno
+  (media de los 3 píxeles más extremos, puestos SOBRE la recta del eje) → `polesFrom`. Se acepta solo si es
+  COHERENTE con la estimación clásica (anchura ≥ 85 % y eje a < 50°; la parte alta va pegada a la fosa y su eje
+  sale sesgado, por eso la tolerancia es amplia); si no (muestra DZ, lado derecho: mancha de 8,6 mm frente a
+  17,2) se conservan los polos clásicos. Con la sección aceptada el centro queda en ella, el diálogo «Ajustar
+  polos» abre justo ahí y `axiBase` ≈ 0 (`v078` admite las dos situaciones).
+- **Sagitales del lado derecho espejados**: `pole.side` ('R' | 'L', puesto en `buildTmj` y conservado en
+  `setCondylePoles`); `condyleSlice` usa `ux = [0, -1, 0]` para R (anterior a la DERECHA de la imagen) y
+  `[0, 1, 0]` para L. Cada cóndilo se ve desde su propio lado, como pidió Manuel.
+- **Marca de agua** opaca con sombra (`stampWatermark`): al 55 % la imagen se veía a través y parecía que
+  el corte quedaba por delante.
+- Pruebas: `tests/v0717.mjs` (todo lo anterior; en la muestra DZ el cóndilo derecho es pequeño y solo se
+  exige ≥ 6 mm de anchura); `v075` adaptada (mide en la panorámica con `#pan-len`; sin comprobaciones de
+  Mayús).
+
 ## 3. TRAMPAS descubiertas (no volver a caer)
 - **Al copiar una barra de aviso (#aw-bar → #atm-bar) revisar TODOS los selectores del flujo original**:
   un `#atm-bar` en `awRestore` dejó el aviso de la vía aérea colgado durante tres versiones sin que ninguna
