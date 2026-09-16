@@ -3,7 +3,7 @@
 Visor web de CBCT con la interfaz de VOXEL. Todo se procesa **en el navegador**: los archivos DICOM
 nunca salen de tu ordenador.
 
-## Qué hace (v0.7.17)
+## Qué hace (v0.7.18)
 - Abre carpetas DICOM, DICOMDIR y ZIP (arrastrar o botones). Detecta las series y deja elegir. Repara solo
   las series mal escritas: tamaño de vóxel incoherente y **bloques de cortes colocados fuera de sitio** (la
   parte alta del cráneo saliendo suelta por debajo del resto); avisa en la barra de estado cuando lo hace.
@@ -30,7 +30,9 @@ nunca salen de tu ordenador.
   «📏 Distancia» (dos toques) y «📐 Ángulo» (tres toques: extremo, vértice, extremo), sin teclas: vale para
   tabletas. Las medidas (en mm o grados, con su color y deshacer/rehacer; «⌫ Borrar medidas» las quita) se ven
   también en el mosaico, más pequeñas, y sus etiquetas se pueden arrastrar.
-  Si los polos del cóndilo no quedan bien, **«⌖ Ajustar polos»** los coloca a mano sobre un corte axial y
+  Nada más marcar los cóndilos se abre **«⌖ Ajustar polos»** para revisar la propuesta automática (los polos
+  se colocan a mano sobre un corte axial; Cancelar deja la propuesta). En el corte ampliado, «📷 Captura»
+  guarda ese corte en PNG con sus medidas. El mismo botón «⌖ Ajustar polos» del mosaico vuelve a abrirlo y
   rehace los cortes perpendiculares al nuevo eje (medial y lateral salen bien también en los CBCT cuyo
   origen no está en la línea media). Al marcar los cóndilos, el corte coronal se coloca solo a su altura
   (la rueda lo ajusta). Rótulos y medidas se dibujan a la resolución de la pantalla: se leen nítidos también

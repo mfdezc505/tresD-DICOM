@@ -160,6 +160,9 @@ check(tmj && Math.abs(tmj.mlR[0]) > 0.8 && Math.abs(tmj.mlL[0]) > 0.8, 'el eje d
 check((await ev(() => document.querySelector('#grid').dataset.layout)) === 'single' && (await page.locator('#atm-grid .atm-cell:not(.atm-gap)').count()) === 14, '14 cortes en el mosaico');
 check(!(await page.locator('#lay-atm').evaluate((e) => e.classList.contains('hidden'))), 'aparece el botón «ATM» en la barra de vistas');
 await sleep(800);
+// v0.7.18: nada más marcar se abre «Ajustar polos» para revisar la propuesta automática; aquí se deja tal cual
+check((await page.locator('.modal.poles').count()) === 1, 'se abre solo «Ajustar polos» para revisar los polos (v0.7.18)');
+if (await page.locator('.modal.poles').count()) { await page.click('#dlg-cancel'); await sleep(400); }
 await shot('v071_atm.png');
 // los cortes tienen contenido (no están en negro)
 const lleno = await ev(() => {

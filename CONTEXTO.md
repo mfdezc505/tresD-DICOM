@@ -798,6 +798,19 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   exige ≥ 6 mm de anchura); `v075` adaptada (mide en la panorámica con `#pan-len`; sin comprobaciones de
   Mayús).
 
+## 2ab. v0.7.18 (16-09-2026) — «Ajustar polos» automático y captura del corte de ATM ampliado
+- Manuel probó los polos de v0.7.17 y siguen «cerca pero no en su sitio»: se le explicó que es el tope de
+  adivinar con un clic y un umbral (sin segmentación ni datos reales para afinar). Decisión suya: nada más
+  marcar los dos cóndilos se abre solo **«Ajustar polos»** (`tmjPicked` → `openPolesDialog()` con 350 ms de
+  margen; `window.tresd.noAutoPoles` lo desactiva para pruebas). La pista del diálogo dice ahora «Propuesta
+  automática… Cancelar deja la propuesta».
+- **Captura del corte de ATM ampliado**: botón «📷 Captura» (`#ab-shot`) en la cabecera del modal →
+  `shotAtmBig()`: vuelve a pintar el corte a ≥ 1400 px de ancho (`drawTmjSlice` con zoom), pinta las medidas
+  con `drawMeasures(out, list, step, out.width / 700)`, el rótulo «Derecha · Sagital centro» y la marca de
+  agua; se descarga `tresD_DICOM_ATM_<lado>_<corte>_<fecha>.png`.
+- Pruebas: `tests/v0718.mjs` (marca por la interfaz → diálogo abierto; Cancelar conserva la propuesta;
+  captura con la medida y el logotipo, comprobando los píxeles) y `v071` adaptada (cierra el diálogo).
+
 ## 3. TRAMPAS descubiertas (no volver a caer)
 - **Al copiar una barra de aviso (#aw-bar → #atm-bar) revisar TODOS los selectores del flujo original**:
   un `#atm-bar` en `awRestore` dejó el aviso de la vía aérea colgado durante tres versiones sin que ninguna

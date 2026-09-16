@@ -31,7 +31,8 @@ con un clic y se edita con ✎, polos fuera de los MPR, registro manual de la fo
 completa al alinear por puntos y «Terminar de editar» sobre el axial (v0.7.15), flechas ↶ ↷ sin texto, «✚ Nuevo
 caso» con confirmación, distancia de ATM con dos toques, panorámica sin la etiqueta V·N y ventana de Ayuda por
 secciones (v0.7.16), medidas por toques también en la panorámica, polos del cóndilo en la sección axial más ancha,
-sagitales del lado derecho vistos desde su lado, requisitos en la ayuda y marca de agua opaca (v0.7.17).
+sagitales del lado derecho vistos desde su lado, requisitos en la ayuda y marca de agua opaca (v0.7.17), «Ajustar polos» que se abre solo tras marcar los cóndilos y
+captura PNG del corte de ATM ampliado con sus medidas (v0.7.18).
 100% en el navegador: los DICOM y las fotos nunca salen del ordenador del usuario.
 **Uso previsto declarado (MDR/RGPD): NO es producto sanitario con marcado CE ni sirve para diagnosticar.**
 No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medidas y alineación son «orientativas».
@@ -55,7 +56,7 @@ No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medida
   `node tests/orient.mjs`, `node tests/meshes.mjs`, `node tests/align.mjs`, `node tests/legal.mjs`,
   `node tests/photo.mjs`, `node tests/align_node.mjs` (Node, dientes reales), `node tests/geom.mjs` (guarda de
   geometría), `node tests/wrap.mjs` (bloque de cortes fuera de sitio), `node tests/real.mjs`,
-  `node tests/features.mjs` (v0.7), `node tests/v071.mjs`, `node tests/v072.mjs`, `node tests/v073.mjs`, `node tests/v074.mjs`, `node tests/v075.mjs`, `node tests/v076.mjs`, `node tests/v077.mjs`, `node tests/v078.mjs`, `node tests/v0711.mjs`, `node tests/v0712.mjs`, `node tests/v0713.mjs`, `node tests/v0714.mjs`, `node tests/v0715.mjs`, `node tests/v0716.mjs` y `node tests/v0717.mjs` hasta 0 errores.
+  `node tests/features.mjs` (v0.7), `node tests/v071.mjs`, `node tests/v072.mjs`, `node tests/v073.mjs`, `node tests/v074.mjs`, `node tests/v075.mjs`, `node tests/v076.mjs`, `node tests/v077.mjs`, `node tests/v078.mjs`, `node tests/v0711.mjs`, `node tests/v0712.mjs`, `node tests/v0713.mjs`, `node tests/v0714.mjs`, `node tests/v0715.mjs`, `node tests/v0716.mjs`, `node tests/v0717.mjs` y `node tests/v0718.mjs` hasta 0 errores.
 - Solo visualización: NO añadir diagnóstico automático ni IA sin pedirlo. Citar licencias de los motores.
 
 ## Arquitectura (ver CONTEXTO.md para el detalle)

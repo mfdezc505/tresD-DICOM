@@ -1162,6 +1162,9 @@ async function tmjPicked(vpId, canvasPos) {
     const wid = (sd) => { const q = res.poles[sd]; return Math.hypot(q.lat[0] - q.med[0], q.lat[1] - q.med[1], q.lat[2] - q.med[2]).toFixed(1); };
     setStatus(t('st_atm_done', { r: wid('R'), l: wid('L') }));
     countEvent('atm');
+    // v0.7.18 (petición de Manuel): la detección automática de los polos es aproximada, así que nada más
+    // marcar los cóndilos se abre «Ajustar polos» para revisarlos; Cancelar deja los automáticos
+    if (!window.tresd || !window.tresd.noAutoPoles) setTimeout(() => { if (V.state.tmj && !document.querySelector('.modal.poles')) openPolesDialog(); }, 350);
   } catch (e) { console.error(e); tmjRestore(); tmjPick = null; setStatus(t('st_error', { msg: e.message || e })); }
   busy = false;
 }
@@ -1451,6 +1454,7 @@ function openAtmBig(side, key) {
       <span class="spacer" style="flex:1"></span>
       <button class="btn-ghost" id="ab-len" aria-pressed="false" title="${t('ab_len_tip')}">${t('ab_len')}</button>
       <button class="btn-ghost" id="ab-ang" aria-pressed="false" title="${t('ab_ang_tip')}">${t('ab_ang')}</button>
+      <button class="btn-ghost" id="ab-shot" title="${t('ab_shot_tip')}">📷 ${t('shot_btn')}</button>
       <button class="btn-ghost" id="ab-close">${t('dlg_close')}</button></div>
     <div class="atm-big-wrap"><canvas id="ab-canvas"></canvas></div>
     <div class="hint" id="ab-hint"></div></div>`;
@@ -1459,6 +1463,7 @@ function openAtmBig(side, key) {
   const close = () => { bg.remove(); atmBig = null; };
   bg.querySelector('#ab-close').addEventListener('click', close);
   bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+  bg.querySelector('#ab-shot').addEventListener('click', shotAtmBig);
   bg.querySelector('#ab-len').addEventListener('click', () => setAtmBigTool(atmBig.tool === 'len' ? null : 'len'));
   bg.querySelector('#ab-ang').addEventListener('click', () => setAtmBigTool(atmBig.tool === 'ang' ? null : 'ang'));
   const cv = atmBig.cv;
@@ -1523,6 +1528,29 @@ function openAtmBig(side, key) {
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   atmBigHint();
   drawAtmBig();
+}
+/**
+ * CAPTURA del corte de ATM ampliado (v0.7.18): el canvas tal cual (con sus medidas pintadas), el rótulo
+ * «Derecha · Sagital centro» arriba a la izquierda y la marca de agua. Se descarga como PNG.
+ */
+function shotAtmBig() {
+  const it = atmBigItem(); if (!it) return;
+  // se vuelve a pintar el corte a ALTA resolución (≥ 1400 px de ancho) con sus medidas, no el canvas de pantalla
+  const zoom = Math.max(1, 1400 / it.img.w);
+  const out = document.createElement('canvas');
+  V.drawTmjSlice(out, it.img, V.getTmjWindow(), zoom);
+  drawMeasures(out, V.getTmjMeas(atmBig.side, it.family, it.off), it.img.step, out.width / 700);   // tamaños de pantalla × 2
+  const g = out.getContext('2d');
+  const label = `${t(atmBig.side === 'R' ? 'atm_side_r' : 'atm_side_l')} · ${atmLabel(it)}`;
+  const fs = Math.max(12, Math.round(out.width / 45));
+  g.font = `600 ${fs}px Poppins, sans-serif`; g.textBaseline = 'top';
+  const tw = g.measureText(label).width;
+  g.fillStyle = 'rgba(0,0,0,.62)'; g.fillRect(fs * 0.6, fs * 0.6, tw + fs, fs * 1.5);
+  g.fillStyle = '#fff'; g.fillText(label, fs * 1.1, fs * 0.85);
+  V.stampWatermark(out, watermark());
+  const name = `tresD_DICOM_ATM_${atmBig.side}_${it.key}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
+  fetch(out.toDataURL('image/png')).then((r) => r.blob()).then((b) => download(b, name));
+  setStatus(t('st_shot_saved'));
 }
 /** Cambia la herramienta del corte ampliado (null = brillo/contraste). Cancela un ángulo a medias. */
 function setAtmBigTool(tool) {
