@@ -1,6 +1,6 @@
 // Prueba de la FASE 3: segmentación rápida (hueso + piel) y foto drapeada sobre la piel.
 // Con la muestra DZ-CBCT (cara sin ojos → MediaPipe no la reconoce): se usa como "foto" el propio render
-// frontal de la piel y el REGISTRO MANUAL (7 puntos en la foto y los mismos en el 3D), así el ajuste
+// frontal de la piel y el REGISTRO MANUAL (3 puntos en la foto y los mismos en el 3D), así el ajuste
 // esperado es exacto (error de registro ≈ 0 px) y el drapeado debe reproducir el render.
 // Uso: node tests/photo.mjs
 import { chromium } from 'playwright';
@@ -86,18 +86,20 @@ if (await page.locator('.modal.photo').count()) {
   await page.check('#dicom-vis'); await page.uncheck('#dicom-vis');
 }
 
-// 3) REGISTRO MANUAL (forzado): 7 puntos en la foto y los mismos en el 3D → ajuste exacto
+// 3) REGISTRO MANUAL (forzado): 3 puntos en la foto y los mismos en el 3D → ajuste exacto
 await page.evaluate(() => { window.tresd.forceManual = true; });
+// desde v0.7.12 el drapeado deja el 2×2: volver al 3D a solas para que la «foto» (render 860×777) y el visor coincidan
+await page.click('[data-layout="vp3d"]'); await page.waitForTimeout(1500);
 await page.click('[data-view="frontal"]'); await page.waitForTimeout(2000);
 await page.setInputFiles('#in-photo', [photoPath]);
 await page.waitForSelector('.modal.photo', { timeout: 240000 });
 check(/marca los puntos a mano/.test(await status()), 'registro manual: pide los puntos');
 await shot('p03_dialogo_puntos.png');
-// 7 puntos sobre la cara en la foto (fracciones del canvas del render)
-const PTS = [[0.50, 0.30], [0.50, 0.40], [0.40, 0.55], [0.60, 0.55], [0.50, 0.72], [0.30, 0.30], [0.70, 0.30]];
+// 3 puntos sobre la cara en la foto (fracciones del canvas del render): nariz, comisura D, comisura I (v0.7.15)
+const PTS = [[0.50, 0.30], [0.40, 0.55], [0.60, 0.55]];
 const cvBox = await page.locator('#ph-canvas').boundingBox();
 for (const [fx, fy] of PTS) { await page.mouse.click(cvBox.x + fx * cvBox.width, cvBox.y + fy * cvBox.height); await page.waitForTimeout(80); }
-check(await page.locator('#ph-ok').isEnabled(), '7 puntos marcados en la foto');
+check(await page.locator('#ph-ok').isEnabled(), '3 puntos marcados en la foto');
 await shot('p04_puntos_foto.png');
 await page.click('#ph-ok'); await page.waitForTimeout(1500);
 check(/Marca en la piel 3D/.test(await status()), 'pide los puntos en el 3D');
@@ -130,9 +132,15 @@ await shot('p07_foto_oculta.png');
 await page.check('#mesh-cards .card[data-role="soft"] .m-photo-vis'); await page.waitForTimeout(500);
 await page.click('#mesh-cards .card[data-role="soft"] .m-photo-del'); await page.waitForTimeout(800);
 check(await page.locator('#btn-photo').isVisible() && await page.locator('#mesh-cards .card[data-role="soft"] .m-photo').isHidden(), 'quitar la foto: vuelve el botón y desaparece la fila');
-// imagen sin cara (logo) → manual → cancelar
+// imagen sin cara (logo) → manual → cancelar. Con el visor 3D OCULTO (solo el axial): la app vuelve al 2×2
+// antes de detectar (v0.7.14: con el 3D oculto el render salía vacío y saltaba el manual sin motivo) y la
+// ventana explica el motivo.
+await page.click('[data-layout="vpAx"]'); await page.waitForTimeout(600);
+check(await page.locator('.vp[data-id="vp3d"]').isHidden(), 'visor 3D oculto antes de subir la foto');
 await page.setInputFiles('#in-photo', [path.join(ROOT, 'public', 'img', 'logo_main_dark.png')]);
 await page.waitForSelector('.modal.photo', { timeout: 240000 });
+check(await page.locator('.vp[data-id="vp3d"]').isVisible(), 'la app enseña el 3D (2×2) antes de reconocer la cara');
+check((await page.locator('.modal.photo .hint.warn').count()) === 1 && /marca los puntos a mano/.test(await page.textContent('.modal.photo .hint.warn')), 'la ventana explica por qué hay que marcar a mano');
 await page.click('#ph-cancel'); await page.waitForTimeout(300);
 check((await status()) === 'Listo.', 'cancelar el registro manual → Listo');
 // quitar la piel → vuelve el botón Segmentar

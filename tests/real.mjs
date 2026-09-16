@@ -90,6 +90,13 @@ await page.click('[data-layout="vp3d"]'); await page.waitForTimeout(2500);
 await shot('r01_real_alineado.png');
 
 // 2) alineación POR PUNTOS: 3 vértices anteriores del escáner superior → sus posiciones en pantalla
+// v0.7.15: al empezar, el render 3D pasa a pantalla completa; al cancelar o terminar vuelve la disposición de antes
+await page.click('[data-layout="quad"]'); await page.waitForTimeout(1500);
+await page.click('#mesh-cards .card[data-role="upper"] .m-points'); await page.waitForTimeout(800);
+check(await page.locator('.vp[data-id="vp3d"]').isVisible() && await page.locator('.vp[data-id="vpAx"]').isHidden(), '[2] al alinear por puntos el render 3D pasa a pantalla completa (v0.7.15)');
+await page.keyboard.press('Escape'); await page.waitForTimeout(800);
+check(await page.locator('.vp[data-id="vpAx"]').isVisible(), '[2] al cancelar vuelve el 2×2');
+await page.click('[data-layout="vp3d"]'); await page.waitForTimeout(2000);
 await page.click('[data-view="frontal"]'); await page.waitForTimeout(1500);
 const pts2d = await page.evaluate(() => {
   const V = window.tresd.V; const m = V.getMeshes().find((x) => x.role === 'upper');
@@ -109,6 +116,7 @@ for (const [x, y] of pts2d) { await page.mouse.click(box.x + x, box.y + y); awai
 await page.waitForTimeout(500);
 check(/FASE 2|CBCT/.test(await page.textContent('#pa-text')), '[2] tras 3 puntos pasa a la fase 2 (CBCT)');
 check(await page.evaluate(() => window.tresd.V.state.render.visible), '[2] fase 2: el CBCT se muestra');
+check((await page.evaluate(() => window.tresd.V.state.render.preset + '|' + document.querySelector('#dicom-preset').value)) === 'radio|radio', '[2] fase 2: render «radiográfico cálido» para ver los dientes (v0.7.14)');
 await shot('r02_puntos_fase2.png');
 // los MISMOS puntos en pantalla, ahora sobre los dientes del CBCT (escáner ya alineado → mismo sitio ± mm)
 for (const [x, y] of pts2d) { await page.mouse.click(box.x + x + 2, box.y + y + 2); await page.waitForTimeout(600); }
@@ -121,14 +129,19 @@ check(pe2.ang < 1.5 && pe2.dc < 1.0, '[2] la pose sigue siendo correcta tras ali
 const pe2l = await poseError('lower');
 check(pe2l.ang < 1.5 && pe2l.dc < 1.0, '[2] la inferior siguió (misma oclusión)');
 check(await page.locator('#pa-bar').isHidden(), '[2] barra oculta al terminar');
+check((await page.evaluate(() => window.tresd.V.state.render.preset + '|' + document.querySelector('#dicom-preset').value)) === 'ivory|ivory', '[2] al terminar vuelve el render de antes (marfil)');
 // cancelar con Esc
 await page.click('#mesh-cards .card[data-role="upper"] .m-points'); await page.waitForTimeout(300);
 await page.keyboard.press('Escape'); await page.waitForTimeout(300);
 check(await page.locator('#pa-bar').isHidden() && await page.evaluate(() => window.tresd.V.state.render.visible), '[2] Esc cancela y restaura la escena');
+check((await page.evaluate(() => window.tresd.V.state.render.preset)) === 'ivory', '[2] Esc también deja el render de antes');
 
 // 3) siluetas en los cortes MPR
 await page.click('[data-layout="quad"]'); await page.waitForTimeout(3000);
-const silPixels = (id) => page.evaluate((id) => { const cv = document.querySelector(`#${id} canvas.silh`); if (!cv) return -1; const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++; return n; }, id);
+// con mallas grandes el cambio de disposición tarda en SwiftShader: esperar a que el canvas de siluetas tenga tamaño
+await page.waitForFunction(() => ['vpAx', 'vpCor', 'vpSag'].every((id) => { const cv = document.querySelector(`#${id} canvas.silh`); return cv && cv.width > 0 && cv.height > 0; }), null, { timeout: 60000 }).catch(() => console.log('[3] aviso: algún canvas de siluetas sigue a 0×0'));
+await page.waitForTimeout(800);
+const silPixels = (id) => page.evaluate((id) => { const cv = document.querySelector(`#${id} canvas.silh`); if (!cv || !cv.width || !cv.height) return -1; const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++; return n; }, id);
 const sAx = await silPixels('vpAx'), sCor = await silPixels('vpCor'), sSag = await silPixels('vpSag');
 console.log('[3] píxeles de silueta:', sAx, sCor, sSag);
 check(sAx > 200 && sCor > 200 && sSag > 200, '[3] siluetas dibujadas en los tres cortes');

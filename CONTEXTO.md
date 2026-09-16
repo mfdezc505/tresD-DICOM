@@ -673,6 +673,85 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   pintarse tras el clic; esperar a que haya `line` en `#svg-layer-vpAx` antes de contar (un tiempo fijo
   daba 0 líneas).
 
+## 2x. v0.7.14 (15-09-2026) — Valorar en la cabecera, render radiográfico al alinear, ATM sin Mayús, pestañas
+- **«★ Valorar»** pasa del pie (enlace pequeño) a la cabecera, entre «Rotación» y «Aa», como botón normal
+  (`#btn-feedback`, `layout.js`).
+- **Alinear por puntos**: al pasar a la fase del CBCT (`paPhaseDst`) se pone el preset «radiográfico cálido»
+  (`radio`) para ver los dientes; `startPointAlign` guarda `prev.render = { ...state.render }` y `paRestore`
+  (terminar, cancelar, Esc) lo devuelve entero (preset + ventana + opacidad) con `applyRender` +
+  `syncRenderControls`.
+- **ATM sin Mayús** (en tabletas no hay teclado): en el MOSAICO arrastrar = brillo/contraste (y mover
+  etiquetas); NO se mide ni con Mayús. Se mide en el corte AMPLIADO con dos botones: «📏 Distancia»
+  (arrastrar) y «📐 Ángulo» (tres toques: extremo, vértice, extremo; Esc cancela a medias). Sin botón,
+  arrastrar en el ampliado = brillo/contraste. `atmBig.tool` (`null | 'len' | 'ang'`), `setAtmBigTool`,
+  `atmBigHint`. Medida angular = `{ type: 'ang', a, v, b, color, lab }`; `measAngle`, `measText` («12,3 mm» /
+  «34,5°»); `measLabelPos(m, gap)` coloca la etiqueta del ángulo dentro, por la bisectriz; `drawMeasures`
+  pinta también el arco del vértice y admite `noLabel` (vista previa del primer tramo). `addAtmMeas(side, it,
+  m)` ya no recibe la longitud. La panorámica sigue midiendo con Mayús + arrastrar (`measuring-shift`).
+- **Tamaño de las medidas en el mosaico**: `gridMeasScale(cv)` = `clamp(minDim/420, 0,7, 1)` (casillas de
+  ~150–300 px → 70 %); `drawMeasures(cv, list, mm, f)` y `measAtLabel(list, cv, p, f)` reciben el factor.
+- **Foto frontal → marcado manual «sin motivo»** (captura de Manuel): la cara se reconoce sobre un render
+  FRONTAL del visor 3D; si estaba oculto (vista de ATM, panorámica o un corte a solas) el render salía vacío
+  y saltaba el manual. Ahora `ingestPhoto` hace `applyLayout('quad')` si `!vpShown('vp3d')` antes de
+  detectar; `detectFace(img, conf)` aplica de verdad la confianza (antes solo al crear la instancia) y hay un
+  segundo intento con 0,3 en la foto y en la piel 3D; la ventana de puntos muestra el MOTIVO en un
+  `.hint.warn` (`manualRegistration(img, lm2, why)`). El manual sigue saliendo cuando el CBCT no incluye ojos
+  o frente (piel sin cara reconocible): eso es lo esperado.
+- **BUG GRAVE arreglado de paso en la ventana de puntos de la foto**: `.modal` es un flex en columna con
+  `align-items: stretch`, así que el `<canvas>` de la foto se ESTIRABA al ancho de la ventana (que crecía con
+  el texto de la pista hasta 92vw): la foto salía deformada y enorme (la captura de Manuel) y, peor, `pos()`
+  mapeaba los clics suponiendo el tamaño intrínseco → los puntos marcados a mano caían en otro sitio y el
+  registro manual salía disparatado (`tests/photo.mjs`: 253 px de error; ahora 0,7 px). Arreglo: el canvas
+  lleva `style="width:cw;height:ch;align-self:center"`, la ventana `width: max(520, cw + 36)` y `pos()`
+  corrige con el `getBoundingClientRect()` por si acaso.
+- **Pestañas de los paneles** (`wirePanelTabs`): en los paneles replegados (`.sidewrap.auto`) hay una pestaña
+  `.hot .tab` siempre visible en el borde, a media altura, con la flecha; un toque alterna la clase `open`
+  (el panel se queda desplegado), tocar fuera lo repliega (oyente `pointerdown` en `document`, en captura),
+  arrastrarla ≥ 30 px hacia dentro lo despliega y ≥ 12 px hacia el borde lo repliega (la pestaña mide 18 px:
+  hacia el borde no hay más recorrido). El `:hover` del ratón sigue funcionando. `.hot` lleva
+  `pointer-events: none` (solo la pestaña recibe eventos) y `z-index` por encima del panel. `applyPanels`
+  quita `open`.
+- Pruebas: `tests/v0714.mjs` (1, 3, 4, 6; con `hasTouch: true`), `tests/real.mjs` (2: preset `radio` en la
+  fase 2 y `ivory` al terminar / cancelar) y `tests/photo.mjs` (5: con el 3D oculto vuelve al 2×2 y la ventana
+  explica el motivo). `v072/v074/v075/v076` adaptadas: miden en el ampliado con `#ab-len`; `v074` acepta los
+  círculos de 2,5–4 px de v0.7.13; `photo.mjs` vuelve al «Render 3D» antes del paso manual (desde v0.7.12 el
+  drapeado deja el 2×2) y `real.mjs` espera a que los canvas de siluetas tengan tamaño (SwiftShader tarda).
+  Pasadas en esta versión: v0714, smoke, v072, v074, v075, v076, v0711, v0712, v0713, photo, real, features.
+
+## 2y. v0.7.15 (15-09-2026) — Captura 2×2, chip del paciente (ocultar / editar), polos fuera de los MPR, 3 clics, pestaña, render al alinear, «Terminar de editar»
+- **Captura en 2×2** (captura de Manuel: cortes diminutos en una esquina): `viewer.screenshot` pegaba cada
+  canvas de Cornerstone a su tamaño INTERNO en una rejilla de celdas iguales, y el canvas del render 3D no
+  tiene el mismo tamaño interno que los de los cortes. Ahora `shotPng` compone SIEMPRE por lo que se ve
+  (`shotDom($('#grid'))`: cada canvas en su sitio y tamaño en pantalla, siluetas incluidas). `viewer.screenshot`
+  queda sin uso desde la interfaz.
+- **Chip del paciente**: `renderChip()` + `chipHidden`; un clic lo oculta («Datos del paciente ocultos (clic
+  para mostrar)», clase `masked`) y otro lo muestra. Botón **✎** (`#btn-patient-edit`) → `editPatientDialog()`
+  (`.modal.patient`: nombre, sexo M/F/O, nacimiento con `<input type="date">`); guarda en `current.patient /
+  sex / birth` (AAAAMMDD) SOLO en la sesión: chip, edad (vía aérea pediátrica), lista de series y resumen de
+  metadatos (`updateSummaryPatient`). El DICOM no se toca (y se dice en la ventana).
+- **Polos del cóndilo**: ya no se pintan en los cortes MPR (salían en el coronal); solo en «Ajustar polos».
+  Las marcas D/I mientras se señalan los cóndilos siguen.
+- **Registro manual de la foto con 3 CLICS**: `GUIDED_POINTS` = nariz (1), comisura derecha (61), comisura
+  izquierda (291); el diálogo exige los 3 (sin «Omitir»). `solvePose` admite n = 3 solo con focal fija
+  (`opts.f`, P3P): `drapePhoto` fija `f = 1,2·W` cuando hay < 5 puntos. La caja de la cara a pintar sin
+  detección en la foto sale de los 3 puntos por proporciones (`faceBoxFrom3`: ±1,6 bocas de ancho, 2,2 arriba,
+  1,3 abajo). Con detección en la foto (`lm2`) se sigue usando su caja y los 3 puntos vienen prellenados.
+- **Pestaña de los paneles**: se esconde con el panel desplegado por toque (`.open`) y, con el ratón dentro del
+  panel, salvo mientras el ratón está sobre la propia pestaña (`.tab:not(:hover)`; si no, no se podía pulsar).
+  Mientras se arrastra (`.dragging`) se ve siempre. Se repliega tocando fuera o con el pin.
+- **Alinear por puntos**: `applyLayout('vp3d')` al empezar (render a pantalla completa) y vuelta a la
+  disposición previa (`prev.layout`) en `paRestore` (terminar, cancelar, Esc).
+- **Editar curva**: barra `#pe-bar` sobre el AXIAL con «↺ Curva automática» y «✔ Terminar de editar»
+  (`setPanoEdit` la muestra/oculta). La barra de la panorámica pasa a `flex-wrap: wrap` (min-height 40):
+  con los dos paneles anclados y dos visores se cortaban los botones del final. `#pan-edit` sigue existiendo.
+- **Caché del navegador** (Manuel: al abrir `ABRIR_tresD_DICOM.bat` salía la versión anterior): los assets
+  tienen nombre FIJO (`assets/index.js`) y el navegador reutilizaba el viejo. `npm run build` ahora ejecuta
+  también `scripts/version_stamp.mjs`, que añade `?v=VERSION` a los assets de `docs/index.html`: al cambiar de
+  versión el navegador (y la CDN de GitHub Pages) piden el archivo nuevo. Vale también para el «aparece
+  todavía la 0.7.9» de las publicaciones.
+- Pruebas: `tests/v0715.mjs` (1, 2, 3, 7, 8), `v0714` (5: pestaña oculta con el panel abierto), `real.mjs`
+  (6: pantalla completa al alinear y vuelta al 2×2 al cancelar), `photo.mjs` (4: 3 puntos).
+
 ## 3. TRAMPAS descubiertas (no volver a caer)
 - **Al copiar una barra de aviso (#aw-bar → #atm-bar) revisar TODOS los selectores del flujo original**:
   un `#atm-bar` en `awRestore` dejó el aviso de la vía aérea colgado durante tres versiones sin que ninguna
@@ -716,6 +795,15 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   imageId afectados (nada de llamar a `metaData.get` dentro del proveedor: se realimenta).
 - **`wadouri.fileManager.add` devuelve un imageId NUEVO cada vez** aunque sea el mismo fichero.
 - **`CrosshairsTool` en modo `minimal` desactiva el giro**: `viewportDraggableRotatable = !minimal.enabled`.
+- **Los canvas de Cornerstone no comparten tamaño interno** (el del render 3D difiere del de los cortes):
+  cualquier composición hay que hacerla por el tamaño EN PANTALLA (`getBoundingClientRect`), nunca por
+  `canvas.width`.
+- **Un `<canvas>` dentro de `.modal` (flex en columna) se estira al ancho de la ventana** (`align-items:
+  stretch`): darle tamaño fijo o `align-self: center`, y al mapear clics usar siempre `getBoundingClientRect()`
+  frente al tamaño intrínseco.
+- **El reconocimiento facial se hace sobre el visor 3D: si está oculto, el render sale vacío** y el fallo
+  parece de MediaPipe. Cualquier cosa que lea el canvas 3D (drapeado, capturas) debe asegurarse antes de que
+  el visor esté visible y con tamaño.
 - **`CrosshairsTool` se pone solo en modo «móvil» en equipos con pantalla táctil** (`any-pointer: coarse`) y
   entonces ignora `handleRadius` y los controles de grosor: círculos de 9 px y cuadrados siempre visibles.
   Lo que no sale en SwiftShader puede salir en el PC de Manuel: probar también con `hasTouch: true`.

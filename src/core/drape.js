@@ -29,11 +29,13 @@ export function loadFaceMesh() {
  * Detecta la cara en una imagen (HTMLImageElement / canvas). Devuelve 478 puntos [x, y] normalizados
  * (0..1, origen arriba-izquierda) o null si no reconoce ninguna cara.
  */
+let fmConf = null;
 export async function detectFace(imageSource, confidence = 0.5) {
   const FaceMesh = await loadFaceMesh();
-  if (!fmInstance) {
-    fmInstance = new FaceMesh({ locateFile: (f) => './mediapipe/' + f });
+  if (!fmInstance) fmInstance = new FaceMesh({ locateFile: (f) => './mediapipe/' + f });
+  if (fmConf !== confidence) {                  // antes la confianza solo se aplicaba al crear la instancia
     fmInstance.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: confidence, minTrackingConfidence: confidence });
+    fmConf = confidence;
   }
   try { fmInstance.reset(); } catch (e) { /* nada */ }
   const res = await new Promise((resolve, reject) => {
@@ -45,16 +47,25 @@ export async function detectFace(imageSource, confidence = 0.5) {
 }
 
 // Puntos guiados para el registro MANUAL (si MediaPipe no reconoce la piel 3D, p. ej. CBCT sin ojos).
-// Índices de FaceMesh equivalentes (para poder mezclar con la detección automática de la foto).
+// Desde v0.7.15 son TRES clics (petición de Manuel): punta de la nariz y las dos comisuras, un triángulo con
+// profundidad (la nariz sobresale) que basta para la pose con la focal fija. Índices de FaceMesh equivalentes
+// (para prellenarlos con la detección automática de la foto).
 export const GUIDED_POINTS = [
   { key: 'prn', idx: 1 },      // punta de la nariz
-  { key: 'sn', idx: 2 },       // subnasal
   { key: 'ch_r', idx: 61 },    // comisura derecha del paciente (a la IZQUIERDA en la foto)
   { key: 'ch_l', idx: 291 },   // comisura izquierda del paciente
-  { key: 'pog', idx: 152 },    // mentón blando
-  { key: 'ex_r', idx: 33 },    // canto externo derecho
-  { key: 'ex_l', idx: 263 },   // canto externo izquierdo
 ];
+
+/**
+ * Caja de la cara en la foto a partir de los TRES puntos guiados (nariz, comisura D, comisura I), por
+ * proporciones faciales: ancho de la cara ≈ 3 bocas; de la nariz a la frente ≈ 2 bocas; de la boca al mentón ≈ 1.
+ */
+export function faceBoxFrom3(p2, W, H) {
+  const [prn, chr, chl] = p2;
+  const m = Math.max(20, Math.hypot(chl[0] - chr[0], chl[1] - chr[1]));
+  const cx = (chr[0] + chl[0]) / 2, my = (chr[1] + chl[1]) / 2;
+  return [Math.max(0, cx - 1.6 * m), Math.max(0, prn[1] - 2.2 * m), Math.min(W, cx + 1.6 * m), Math.min(H, my + 1.3 * m)];
+}
 
 // ---------------------------------------------------------------- álgebra mínima
 const R0 = [1, 0, 0, 0, 0, -1, 0, 1, 0];      // cámara frontal en LPS: x=+X (izq. paciente), y=-Z (abajo), z=+Y (posterior)
@@ -87,7 +98,7 @@ function median(a) { const s = Float64Array.from(a).sort(); return s.length ? s[
  */
 export function solvePose(pts2d, pts3d, W, H, opts = {}) {
   const n = Math.min(pts2d.length, pts3d.length);
-  if (n < 4) return null;
+  if (n < 3 || (n < 4 && !opts.f)) return null;      // con 3 puntos solo si la focal viene fija (P3P)
   const cx = W / 2, cy = H / 2;
   // inicio: cámara frontal; distancia por el tamaño de la cara (mm vs px) con focal ≈ 1,2·W
   const c3 = [0, 0, 0]; for (let i = 0; i < n; i++) { c3[0] += pts3d[i][0]; c3[1] += pts3d[i][1]; c3[2] += pts3d[i][2]; } c3[0] /= n; c3[1] /= n; c3[2] /= n;

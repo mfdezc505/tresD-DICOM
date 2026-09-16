@@ -41,7 +41,7 @@ await page.goto('http://localhost:8799/');
 await sleep(600);
 
 console.log('— 1) botón del pie y ventana');
-check((await ev(() => document.querySelector('#btn-feedback').textContent)) === '★ Valorar', 'el pie tiene «★ Valorar»');
+check((await ev(() => document.querySelector('#btn-feedback').textContent)) === '★ Valorar', 'la cabecera tiene «★ Valorar»');
 await page.click('#btn-feedback'); await sleep(300);
 check(await page.locator('.modal.feedback').isVisible(), 'se abre la ventana de valoración');
 check(await page.locator('#fb-send').isDisabled(), '«Enviar» desactivado hasta elegir estrellas');

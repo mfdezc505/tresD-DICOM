@@ -65,16 +65,15 @@ await sleep(900);
 
 console.log('— 1) nitidez de las etiquetas');
 // una medida sobre el corte sagital central, para que haya etiqueta que mirar
-const mBox = await page.locator('#atm-grid .atm-cell[data-key="sag0"]').first().boundingBox();
-await page.keyboard.down('Shift');
+await page.click('#atm-grid .atm-cell[data-key="sag0"] .atm-zoom', { force: true });
+await sleep(800);
+await page.click('#ab-len'); await sleep(150);                 // v0.7.14: se mide con el botón «Distancia»
+const mBox = await page.locator('#ab-canvas').boundingBox();
 await page.mouse.move(mBox.x + mBox.width * 0.35, mBox.y + mBox.height * 0.4);
 await page.mouse.down();
 await page.mouse.move(mBox.x + mBox.width * 0.62, mBox.y + mBox.height * 0.62, { steps: 8 });
 await page.mouse.up();
-await page.keyboard.up('Shift');
 await sleep(400);
-await page.click('#atm-grid .atm-cell[data-key="sag0"] .atm-zoom', { force: true });
-await sleep(800);
 const big = await ev(() => {
   const cv = document.querySelector('#ab-canvas'); const r = cv.getBoundingClientRect();
   const V = window.tresd.V, it = V.state.tmj.series.R.find((x) => x.key === 'sag0');

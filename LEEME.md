@@ -3,7 +3,7 @@
 Visor web de CBCT con la interfaz de VOXEL. Todo se procesa **en el navegador**: los archivos DICOM
 nunca salen de tu ordenador.
 
-## Qué hace (v0.7.13)
+## Qué hace (v0.7.15)
 - Abre carpetas DICOM, DICOMDIR y ZIP (arrastrar o botones). Detecta las series y deja elegir. Repara solo
   las series mal escritas: tamaño de vóxel incoherente y **bloques de cortes colocados fuera de sitio** (la
   parte alta del cráneo saliendo suelta por debajo del resto); avisa en la barra de estado cuando lo hace.
@@ -25,9 +25,11 @@ nunca salen de tu ordenador.
   entre polos y saca, por lado, 5 cortes sagitales perpendiculares a ese eje **a 1 mm** (de medial a lateral),
   1 coronal y 1 axial (este a la altura de la cabeza del cóndilo, ya separada de la fosa), en un mosaico (como el panel de ATM de VOXEL). La **rueda del ratón** recorre los
   cortes de milímetro en milímetro (sobre un sagital mueve los cinco; sobre el coronal o el axial, solo ese).
-  **Arrastrar = medir** (distancia en mm, con su color y deshacer/rehacer; «⌫ Borrar medidas» las quita);
-  brillo/contraste con **Mayús + arrastrar**. Los cortes se encuadran solos a la casilla del mosaico. Cada
-  corte se puede **ver en grande** (doble clic sobre él o botón ⤢ de la casilla) y medir ahí con más precisión.
+  **Arrastrar = brillo/contraste**. Los cortes se encuadran solos a la casilla del mosaico. Cada corte se
+  puede **ver en grande** (doble clic sobre él o botón ⤢ de la casilla) y ahí se **mide** con los botones
+  «📏 Distancia» (arrastrar) y «📐 Ángulo» (tres toques: extremo, vértice, extremo), sin teclas: vale para
+  tabletas. Las medidas (en mm o grados, con su color y deshacer/rehacer; «⌫ Borrar medidas» las quita) se ven
+  también en el mosaico, más pequeñas, y sus etiquetas se pueden arrastrar.
   Si los polos del cóndilo no quedan bien, **«⌖ Ajustar polos»** los coloca a mano sobre un corte axial y
   rehace los cortes perpendiculares al nuevo eje (medial y lateral salen bien también en los CBCT cuyo
   origen no está en la línea media). Al marcar los cóndilos, el corte coronal se coloca solo a su altura
@@ -40,6 +42,9 @@ nunca salen de tu ordenador.
   color y trazado en vivo mientras mueves el ratón.
 - Corte del volumen por plano sagital / axial / coronal, con «voltear lado».
 - Planos MPR dentro del render 3D (panel derecho).
+- Chip del paciente en la cabecera (nombre · sexo · nacimiento y edad · fecha del estudio): un **clic lo
+  oculta** (docencia, capturas) y otro lo muestra; el lápiz ✎ permite **editar nombre, sexo y nacimiento**
+  solo para la sesión (el archivo DICOM no se modifica).
 - Metadatos DICOM completos con búsqueda y exportación JSON / CSV. Captura PNG con el logotipo «DICOM viewer» como marca de agua, en la versión del tema activo (también de la panorámica y del mosaico de ATM). Doble clic sobre la panorámica vuelve al 2×2. Rotación automática.
 - **Escáneres intraorales** (STL / PLY / OBJ), solos o junto al CBCT: se orientan automáticamente al marco
   del paciente (como el paso 1 de tresD Models) y, con CBCT, se **alinean solos sobre los dientes** (superficie
@@ -52,8 +57,9 @@ nunca salen de tu ordenador.
 - **Segmentación rápida** del CBCT (cráneo + piel por umbral automático, con la dentición a resolución fina
   para ver las coronas; la piel al 80 % de opacidad). La piel es la superficie EXTERNA: ya no lleva dentro
   la vía aérea ni los senos y **foto frontal drapeada** sobre la
-  piel 3D: detección facial automática (MediaPipe, en el navegador) o 7 puntos marcados a mano si el CBCT no
-  incluye los ojos.
+  piel 3D: detección facial automática (MediaPipe, en el navegador) o, si no reconoce la cara en la piel 3D
+  (p. ej. el CBCT no incluye los ojos), **3 clics** a mano (punta de la nariz y las dos comisuras) en la foto y
+  los mismos 3 en el 3D.
 - **Vía aérea faríngea** como en VOXEL: dos clics en el corte sagital (límite superior a la altura del paladar /
   PNS y límite inferior en la epiglotis) → malla de la columna de aire con **mapa de calor** del área de la
   sección (azul = amplio, rojo = estrecho) y **valores** (volumen en cm³ y área mínima MCA en mm²) comparados
@@ -63,7 +69,7 @@ nunca salen de tu ordenador.
   escáneres, alinear, voltear, transparencia, color, ver/ocultar, segmentación, foto, vía aérea, mediciones,
   corte, preset, brillo/contraste, siluetas. (Cargar o quitar el DICOM no se deshace.)
 - Contador de visitas anónimo (GoatCounter: sin cookies ni datos personales).
-- **Valoración** (1-5 estrellas + comentario opcional): se pide una vez tras unos minutos de uso y siempre desde «★ Valorar» en el pie. Llega por correo al titular; anónima.
+- **Valoración** (1-5 estrellas + comentario opcional): se pide una vez tras unos minutos de uso y siempre desde el botón «★ Valorar» de la cabecera. Llega por correo al titular; anónima.
 - Términos de uso (aceptación en la primera visita), aviso legal y política de privacidad (pie de página).
   Uso previsto: visualización y docencia; NO es un producto sanitario con marcado CE ni sirve para diagnosticar.
 - Español / inglés, tema oscuro / claro, tamaño de letra (botón Aa), paneles replegables (⟨ ⟩ / 📌).

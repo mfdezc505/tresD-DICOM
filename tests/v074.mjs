@@ -87,7 +87,7 @@ await hoverLine();
 const quad = await svgCount();
 const cfgQuad = await ev(() => window.tresd.V.tools.ToolGroupManager.getToolGroup('tg-mpr').getToolConfiguration('Crosshairs'));
 check(quad.vpAx.rect === 0 && quad.vpCor.rect === 0 && quad.vpSag.rect === 0, 'no se dibuja ningún cuadrado en los tres cortes');
-check(quad.vpAx.circle > 0 && quad.vpAx.r.every((r) => r <= 1.7), `círculos de giro de radio ${quad.vpAx.r.join('/')} px`);
+check(quad.vpAx.circle > 0 && quad.vpAx.r.every((r) => r >= 2.5 && r <= 4), `círculos de giro de radio (2,5–4 px desde v0.7.13) ${quad.vpAx.r.join('/')} px`);
 await shot('v074_cruz_quad.png');
 
 console.log('— la cruz se adapta al tamaño del visor');
@@ -121,17 +121,9 @@ await ev(() => window.tresd.renderTmj());
 await page.click('#lay-atm'); await sleep(900);
 await ev(() => window.tresd.fitTmjAspect());
 await sleep(400);
-// desde v0.7.5 se mide con MAYÚSCULAS + arrastrar
+// desde v0.7.14 en el mosaico arrastrar es brillo/contraste; se mide en el corte ampliado con el botón «Distancia»
 const mBox = await page.locator('#atm-grid .atm-cell[data-key="sag0"]').first().boundingBox();
-await page.keyboard.down('Shift');
-await page.mouse.move(mBox.x + mBox.width * 0.3, mBox.y + mBox.height * 0.3);
-await page.mouse.down();
-await page.mouse.move(mBox.x + mBox.width * 0.7, mBox.y + mBox.height * 0.7, { steps: 10 });
-await page.mouse.up();
-await page.keyboard.up('Shift');
-await sleep(400);
 const nMeas = () => ev(() => Object.values(window.tresd.V.getAllTmjMeas()).reduce((a, l) => a + l.length, 0));
-check((await nMeas()) === 1, 'se puede medir arrastrando sobre un corte del mosaico');
 // corte ampliado
 await page.hover('#atm-grid .atm-cell[data-key="sag0"]');
 await sleep(200);
@@ -140,15 +132,14 @@ await sleep(600);
 check((await page.locator('.modal.atm-big').count()) === 1, 'el botón ⤢ abre el corte en grande');
 const big = await page.locator('.modal.atm-big canvas').boundingBox();
 check(big.width > mBox.width * 2, `el corte ampliado es mucho mayor (${Math.round(big.width)} vs ${Math.round(mBox.width)} px)`);
-// medir dentro del modal
-await page.keyboard.down('Shift');
+// medir dentro del modal con el botón «Distancia»
+await page.click('#ab-len'); await sleep(150);
 await page.mouse.move(big.x + big.width * 0.35, big.y + big.height * 0.35);
 await page.mouse.down();
 await page.mouse.move(big.x + big.width * 0.6, big.y + big.height * 0.6, { steps: 10 });
 await page.mouse.up();
-await page.keyboard.up('Shift');
 await sleep(400);
-check((await nMeas()) === 2, 'también se mide dentro del corte ampliado');
+check((await nMeas()) === 1, 'se mide dentro del corte ampliado con el botón «Distancia»');
 check(/mm/.test(await ev(() => document.querySelector('#status-text').textContent)), 'se muestra el valor de la medida');
 await shot('v074_atm_grande.png');
 // la rueda cambia de corte dentro del modal

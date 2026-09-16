@@ -22,7 +22,7 @@ import { patientFrame } from './orient.js';
 import { enamelTargets, pickTargets, alignToTeeth, refineToTeeth, rigidFromPairs, alignQuality, snapToTarget } from './align.js';
 import { quickSegment } from './segment.js';
 import { autoThresholds } from './stats.js';
-import { detectFace, solvePose, buildAtlas, projectUV, faceBoxFrom } from './drape.js';
+import { detectFace, solvePose, buildAtlas, projectUV, faceBoxFrom, faceBoxFrom3 } from './drape.js';
 import { History } from './history.js';
 import { airwayAuto, heatColors, heatRange, airwayNorm, airwayClassify } from './airway.js';
 export { airwayNorm, airwayClassify };
@@ -233,14 +233,12 @@ export async function initViewer(els) {
     q.forEach((p, i) => { g.beginPath(); g.arc(p[0], p[1], 5, 0, 2 * Math.PI); g.fillStyle = '#FDE047'; g.fill(); g.stroke(); g.fillStyle = '#FDE047'; g.fillText(String(i + 1), p[0] + 8, p[1] - 6); });
     g.restore();
   });
-  // marcas de los CÓNDILOS (mientras se señalan) y polos de la ATM, sobre cualquier corte
+  // marcas de los CÓNDILOS mientras se señalan, sobre cualquier corte. Los POLOS ya no se pintan en los MPR
+  // (v0.7.15, petición de Manuel: salían en el coronal); se ven solo en el diálogo «Ajustar polos», sobre su
+  // propio corte axial.
   silhouettes.extra.push((id, g, vp, axis, value) => {
     const marks = [];
     if (state.tmjMarks) state.tmjMarks.forEach((w, i) => marks.push([w, ['#22E0FF', '#FF5CF0'][i], ['D', 'I'][i]]));
-    else if (state.tmj) for (const [sd, pl] of Object.entries(state.tmj.poles)) {
-      const col = sd === 'R' ? '#22E0FF' : '#FF5CF0';
-      marks.push([pl.med, col, sd + ' med'], [pl.lat, col, sd + ' lat']);
-    }
     for (const [w, col, tag] of marks) {
       if (Math.abs(w[axis] - value) > 4) continue;          // solo si el corte pasa cerca de la marca
       const q = vp.worldToCanvas(w);
@@ -1025,7 +1023,7 @@ export async function drapePhoto(image, opts = {}) {
   const W = image.naturalWidth || image.width, H = image.naturalHeight || image.height;
   st('photo');
   let lm2 = null;
-  try { lm2 = await detectFace(image); } catch (e) { console.warn(e); return { fail: 'mediapipe' }; }
+  try { lm2 = (await detectFace(image)) || (await detectFace(image, 0.3)); } catch (e) { console.warn(e); return { fail: 'mediapipe' }; }
   let p2 = [], p3 = [];
   if (opts.pairs) {
     p2 = opts.pairs.p2; p3 = opts.pairs.p3;
@@ -1036,7 +1034,7 @@ export async function drapePhoto(image, opts = {}) {
     let lm3 = null, pts3 = null;
     try {
       st('face3d');
-      lm3 = await detectFace(snap.canvas);
+      lm3 = (await detectFace(snap.canvas)) || (await detectFace(snap.canvas, 0.3));   // la piel gris cuesta más (v0.7.14)
       if (lm3) pts3 = lm3.map((p) => snap.pick(p[0], p[1]));
     } finally { snap.restore(); }
     if (!lm3) return { fail: 'no_face_3d', lm2 };
@@ -1045,11 +1043,13 @@ export async function drapePhoto(image, opts = {}) {
     if (p2.length < 30) return { fail: 'no_face_3d', lm2 };
   }
   st('pose');
-  const pose = solvePose(p2, p3, W, H, {});
+  // con pocos puntos (registro manual de 3 clics) la focal no se puede estimar: se fija en 1,2·W (≈ 50 mm)
+  const pose = solvePose(p2, p3, W, H, p2.length < 5 ? { f: 1.2 * W } : {});
   if (!pose) return { fail: 'pose' };
   st('texture');
-  // zona de la cara que se pinta: caja de los puntos detectados (o de los marcados a mano), ampliada
-  const box = faceBoxFrom(lm2 || p2.map((q) => [q[0] / W, q[1] / H]), W, H);
+  // zona de la cara que se pinta: caja de los puntos detectados en la foto; sin detección, la de los 3 puntos
+  // marcados a mano por proporciones faciales (v0.7.15) o la de los puntos que haya
+  const box = lm2 ? faceBoxFrom(lm2, W, H) : (p2.length === 3 ? faceBoxFrom3(p2, W, H) : faceBoxFrom(p2.map((q) => [q[0] / W, q[1] / H]), W, H));
   const atlas = buildAtlas(image, W, H, lm2, box);
   const { uv, painted } = projectUV(soft.pts, meshes.normals(soft.id), pose, W, H, atlas);
   const prev = drapeSnapshot(soft);

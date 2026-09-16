@@ -107,15 +107,16 @@ check(changed, 'el corte se recalcula de verdad al desplazarse');
 await shot('v072_atm.png');
 
 console.log('— medidas sobre los cortes de ATM');
-// desde v0.7.5 se mide con MAYÚSCULAS + arrastrar (el arrastre normal es brillo/contraste)
-const mBox = await page.locator('#atm-grid .atm-cell[data-key="sag0"]').first().boundingBox();
-await page.keyboard.down('Shift');
+// desde v0.7.14 se mide en el corte AMPLIADO con el botón «Distancia» (sin Mayús: tabletas)
+await ev(() => window.tresd.openAtmBig('R', 'sag0')); await sleep(600);
+await page.click('#ab-len'); await sleep(150);
+const mBox = await page.locator('#ab-canvas').boundingBox();
 await page.mouse.move(mBox.x + mBox.width * 0.35, mBox.y + mBox.height * 0.35);
 await page.mouse.down();
 await page.mouse.move(mBox.x + mBox.width * 0.65, mBox.y + mBox.height * 0.65, { steps: 8 });
 await page.mouse.up();
-await page.keyboard.up('Shift');
 await sleep(400);
+await page.click('#ab-close'); await sleep(300);
 const meas = await ev(() => { const m = window.tresd.V.getAllTmjMeas(); const k = Object.keys(m)[0]; return { k, n: k ? m[k].length : 0, st: document.querySelector('#status-text').textContent }; });
 check(meas.n === 1, `una medida guardada en ${meas.k}`);
 check(/mm/.test(meas.st), `se muestra el valor: ${meas.st.slice(0, 60)}`);

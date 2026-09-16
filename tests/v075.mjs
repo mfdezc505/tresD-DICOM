@@ -152,7 +152,7 @@ await shot('v075_atm_marcar.png');
 await page.keyboard.press('Escape'); await sleep(800);
 check((await ev(() => window.tresd.V.silhouettesSuppressed())) === false, 'al cancelar vuelven las siluetas');
 
-console.log('— cortes de ATM: medir con Mayús');
+console.log('— cortes de ATM: arrastrar = brillo; medir en el corte ampliado');
 await ev(() => window.tresd.V.buildTmj({ R: [-54, -24, 43], L: [50, -29, 45] }, null));
 await page.waitForFunction(() => window.tresd.V.state.tmj, null, { timeout: 300000 });
 await ev(() => window.tresd.renderTmj());
@@ -169,15 +169,25 @@ await page.mouse.up();
 await sleep(300);
 check((await nMeas()) === 0, 'sin Mayús no se mide en el mosaico');
 check(Math.abs((await ev(() => window.tresd.V.getTmjWindow())).upper - tw0.upper) > 1, 'sin Mayús se ajusta el brillo/contraste');
-// con Mayús: medida
+// con Mayús TAMPOCO se mide en el mosaico (v0.7.14: en tabletas no hay teclado); se mide en el corte ampliado
 await page.keyboard.down('Shift');
 await page.mouse.move(cell.x + cell.width * 0.3, cell.y + cell.height * 0.35);
 await page.mouse.down();
 await page.mouse.move(cell.x + cell.width * 0.7, cell.y + cell.height * 0.65, { steps: 10 });
 await page.mouse.up();
 await page.keyboard.up('Shift');
+await sleep(300);
+check((await nMeas()) === 0, 'con Mayús tampoco se mide en el mosaico (v0.7.14)');
+await ev(() => window.tresd.openAtmBig('R', 'sag0')); await sleep(600);
+await page.click('#ab-len'); await sleep(150);
+const abBox = await page.locator('#ab-canvas').boundingBox();
+await page.mouse.move(abBox.x + abBox.width * 0.3, abBox.y + abBox.height * 0.35);
+await page.mouse.down();
+await page.mouse.move(abBox.x + abBox.width * 0.7, abBox.y + abBox.height * 0.65, { steps: 8 });
+await page.mouse.up();
 await sleep(400);
-check((await nMeas()) === 1, 'con Mayús sí se mide');
+await page.click('#ab-close'); await sleep(300);
+check((await nMeas()) === 1, 'con el botón «Distancia» del corte ampliado sí se mide');
 check((await ev(() => { const k = Object.keys(window.tresd.V.getAllTmjMeas())[0]; return !!window.tresd.V.getAllTmjMeas()[k][0].lab; })), 'la medida guarda el desplazamiento de su etiqueta');
 // cursor de cruz solo con Mayús
 check((await ev(() => document.body.classList.contains('measuring-shift'))) === false, 'sin Mayús el cursor vuelve al normal');

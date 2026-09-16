@@ -10,13 +10,15 @@ export function buildLayout(root) {
         <img id="brand-img" alt="tresD DICOM">
       </div>
       <div class="vsep"></div>
-      <div id="patient-chip" class="hidden"></div>
+      <div id="patient-chip" class="hidden" data-i18n-title="pat_chip_tip"></div>
+      <button id="btn-patient-edit" class="btn-ghost btn-icon hidden" data-i18n-title="pat_edit_tip">✎</button>
       <div class="spacer"></div>
       <button id="btn-undo" class="btn-ghost hidden" data-i18n-title="undo_tip" disabled>↶ <span data-i18n="undo_btn"></span></button>
       <button id="btn-redo" class="btn-ghost hidden" data-i18n-title="redo_tip" disabled>↷ <span data-i18n="redo_btn"></span></button>
       <button id="btn-meta" class="btn-ghost hidden" data-i18n="meta_btn"></button>
       <button id="btn-shot" class="btn-ghost hidden">📷 <span data-i18n="shot_btn"></span></button>
       <button id="btn-rotate" class="btn-ghost hidden" aria-pressed="false">⟳ <span data-i18n="rotate_btn"></span></button>
+      <button id="btn-feedback" class="btn-ghost" data-i18n="fb_btn" data-i18n-title="fb_hint"></button>
       <button id="btn-font" class="btn-ghost btn-icon" data-i18n-title="font_btn">Aa</button>
       <button id="btn-help" class="btn-ghost btn-icon" data-i18n-title="help_btn">?</button>
       <button id="btn-theme" class="btn-ghost btn-icon" data-i18n-title="theme_btn">◐</button>
@@ -172,7 +174,7 @@ export function buildLayout(root) {
   </div>
 
   <footer class="status"><span id="status-text" data-i18n="st_ready"></span><div class="progress hidden" id="progress"><div></div></div>
-    <span class="legal-links"><a href="#" data-legal="terms" data-i18n="legal_terms"></a> · <a href="#" data-legal="notice" data-i18n="legal_notice"></a> · <a href="#" data-legal="privacy" data-i18n="legal_privacy"></a> · <a href="#" id="btn-feedback" data-i18n="fb_btn"></a></span></footer>
+    <span class="legal-links"><a href="#" data-legal="terms" data-i18n="legal_terms"></a> · <a href="#" data-legal="notice" data-i18n="legal_notice"></a> · <a href="#" data-legal="privacy" data-i18n="legal_privacy"></a></span></footer>
 
   <div id="meta-drawer">
     <div class="mhead">
@@ -195,7 +197,8 @@ function vp(id, labelKey) {
   const bar = id === 'vp3d' ? `<div class="pa-bar hidden" id="pa-bar"><span id="pa-text"></span><button class="btn-ghost" id="pa-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="pa-cancel" data-i18n="dlg_cancel"></button></div>`
     : id === 'vpSag' ? `<div class="pa-bar hidden" id="aw-bar"><span id="aw-text"></span><button class="btn-ghost" id="aw-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="aw-cancel" data-i18n="dlg_cancel"></button></div>`
       : id === 'vpCor' ? `<div class="pa-bar hidden" id="atm-bar"><span id="atm-text"></span><button class="btn-ghost" id="atm-undo" data-i18n="dlg_undo"></button><button class="btn-ghost" id="atm-cancel" data-i18n="dlg_cancel"></button></div>`
-        : id === 'vpAx' ? `<div class="pa-bar hidden" id="pd-bar"><span id="pd-text"></span><button class="btn-ghost" id="pd-undo" data-i18n="dlg_undo"></button><button class="btn-primary" id="pd-done" data-i18n="pd_done" style="width:auto;min-height:28px;padding:2px 12px"></button><button class="btn-ghost" id="pd-cancel" data-i18n="dlg_cancel"></button></div>` : '';
+        : id === 'vpAx' ? `<div class="pa-bar hidden" id="pd-bar"><span id="pd-text"></span><button class="btn-ghost" id="pd-undo" data-i18n="dlg_undo"></button><button class="btn-primary" id="pd-done" data-i18n="pd_done" style="width:auto;min-height:28px;padding:2px 12px"></button><button class="btn-ghost" id="pd-cancel" data-i18n="dlg_cancel"></button></div>
+          <div class="pa-bar hidden" id="pe-bar"><span id="pe-text" data-i18n="pe_text"></span><button class="btn-ghost" id="pe-reset" data-i18n="pan_reset"></button><button class="btn-primary" id="pe-done" data-i18n="pe_done" style="width:auto;min-height:28px;padding:2px 12px"></button></div>` : '';
   return `<div class="vp" data-id="${id}">
     <div class="cs" id="${id}" oncontextmenu="return false"></div>${bar}
     <span class="vplabel" data-i18n="${labelKey}"></span>

@@ -62,6 +62,13 @@ export async function buildMetadata(series) {
   renderTable('');
 }
 
+/** Refresca en el resumen los datos que el usuario puede editar en la sesión (nombre, sexo, nacimiento; v0.7.15). */
+export function updateSummaryPatient(series) {
+  if (!summary || !('meta_patient' in summary)) return;
+  summary.meta_patient = series.patient || '—'; summary.meta_birth = fmtDate(series.birth) || '—'; summary.meta_sex = series.sex || '—';
+  renderSummary();
+}
+
 function renderSummary() {
   const box = document.getElementById('meta-summary');
   box.innerHTML = Object.entries(summary).map(([k, v]) => `<div><b>${t(k)}:</b> ${escapeHtml(String(v))}</div>`).join('');

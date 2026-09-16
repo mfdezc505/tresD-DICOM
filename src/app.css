@@ -13,7 +13,13 @@
 .brand img { height: 36px; width: auto; display: block; }
 .vsep { width: 1px; height: 26px; background: var(--border); margin: 0 4px; }
 #patient-chip { font-weight: 700; font-size: calc(15px * var(--fs)); color: var(--patient-text); white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; min-width: 0; }
+  text-overflow: ellipsis; min-width: 0; cursor: pointer; user-select: none; }
+#patient-chip.masked { color: var(--muted); font-weight: 500; font-style: italic; }
+.modal.patient .frow { display: flex; align-items: center; gap: 10px; }
+.modal.patient .frow > span { flex: 0 0 120px; color: var(--text2); font-size: calc(13px * var(--fs)); }
+.modal.patient .frow > input, .modal.patient .frow > select { flex: 1; }
+.modal.patient input[type="date"] { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; outline: none; }
+.modal.patient input[type="date"]:focus { border: 2px solid var(--accent); }
 .version { font-size: calc(11px * var(--fs)); color: var(--muted); white-space: nowrap; }
 #view-bar .layout-group { display: flex; gap: 4px; margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--border); }
 #view-bar .layout-group button { font-size: calc(13px * var(--fs)); padding: 4px 8px; min-height: 30px; }
@@ -31,7 +37,22 @@
 .sidewrap .hot { display: none; }
 .sidewrap.auto { position: absolute; top: 0; bottom: 0; width: 16px; z-index: 6; }
 .sidewrap.auto.left { left: 0; } .sidewrap.auto.right { right: 0; }
-.sidewrap.auto .hot { display: block; position: absolute; top: 0; bottom: 0; width: 16px; }
+.sidewrap.auto .hot { display: block; position: absolute; top: 0; bottom: 0; width: 16px; pointer-events: none; z-index: 8; }
+/* pestaña SIEMPRE visible para desplegar el panel con un toque o arrastrándola (tabletas, v0.7.14) */
+.sidewrap.auto .hot .tab { position: absolute; top: 50%; transform: translateY(-50%); width: 18px; height: 64px; padding: 0; border: none;
+  background: var(--accent); color: #fff; font-size: 15px; line-height: 1; cursor: pointer; pointer-events: auto; opacity: .85;
+  display: flex; align-items: center; justify-content: center; touch-action: none; user-select: none; box-shadow: 0 0 8px rgba(0,0,0,.35); }
+.sidewrap.auto .hot .tab:hover { opacity: 1; }
+/* con el panel desplegado la pestaña se esconde: tapaba el texto del panel (v0.7.15). Por toque (.open) del todo;
+   con el ratón dentro del panel también, salvo mientras el ratón está sobre la propia pestaña (si no, no se
+   podría pulsar) */
+.sidewrap.auto.open .hot .tab { opacity: 0; pointer-events: none; }
+.sidewrap.auto:hover .hot .tab:not(:hover) { opacity: 0; }
+.sidewrap.auto .hot .tab.dragging, .sidewrap.auto.open .hot .tab.dragging { opacity: .85 !important; pointer-events: auto; }
+.sidewrap.auto.left .hot .tab { left: 0; border-radius: 0 8px 8px 0; }
+.sidewrap.auto.right .hot .tab { right: 0; border-radius: 8px 0 0 8px; }
+.sidewrap.auto.left .hot .tab::after { content: '⟩'; } .sidewrap.auto.left.open .hot .tab::after { content: '⟨'; }
+.sidewrap.auto.right .hot .tab::after { content: '⟨'; } .sidewrap.auto.right.open .hot .tab::after { content: '⟩'; }
 .sidewrap.auto.left .hot { left: 0; background: linear-gradient(to right, color-mix(in srgb, var(--accent) 35%, transparent), transparent); }
 .sidewrap.auto.right .hot { right: 0; background: linear-gradient(to left, color-mix(in srgb, var(--accent) 35%, transparent), transparent); }
 .sidewrap.auto .pane { position: absolute; top: 0; bottom: 0; box-shadow: 0 0 22px rgba(0,0,0,.45); opacity: 0;
@@ -186,13 +207,14 @@
   background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: 10px; padding: 6px 12px; font-size: calc(13px * var(--fs)); font-weight: 700;
   box-shadow: 0 4px 16px rgba(0,0,0,.35); max-width: 92%; }
 #grid .vp .pa-bar button { min-height: 28px; padding: 2px 10px; }
+#grid .vp #pe-bar { white-space: nowrap; }   /* barra corta de «Terminar de editar»: sin partir el texto (v0.7.15) */
 
 /* ---------------- panorámica (corte curvo) ---------------- */
 #grid .vp[data-id="vpPan"] .pan-wrap { position: absolute; inset: 0 0 40px 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #grid .vp[data-id="vpPan"] canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; cursor: default; }
-#grid .vp[data-id="vpPan"] .pan-bar, #grid .vp[data-id="vpAtm"] .pan-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 12px;
+#grid .vp[data-id="vpPan"] .pan-bar, #grid .vp[data-id="vpAtm"] .pan-bar { position: absolute; left: 0; right: 0; bottom: 0; min-height: 40px; display: flex; align-items: center; gap: 6px 10px; padding: 4px 12px;
   background: color-mix(in srgb, var(--viewer-bg) 85%, transparent); border-top: 1px solid var(--border); font-size: calc(12px * var(--fs)); color: var(--text2); z-index: 3;
-  white-space: nowrap; flex-wrap: nowrap; overflow: hidden; }
+  white-space: nowrap; flex-wrap: wrap; overflow: hidden; }   /* se parte en dos filas si no cabe: antes se cortaban los botones del final (v0.7.15) */
 #grid .vp[data-id="vpPan"] .pan-bar input[type="range"] { flex: 0 1 140px; min-width: 56px; }
 #grid .vp[data-id="vpPan"] .pan-bar > label, #grid .vp[data-id="vpPan"] .pan-bar > span { flex: 0 0 auto; }
 #grid .vp[data-id="vpAtm"] .pan-bar button { min-height: 26px; padding: 2px 10px; font-size: calc(12px * var(--fs)); flex: 0 0 auto; }
@@ -219,10 +241,10 @@
 #grid .vp[data-id="vpAtm"] .atm-cell span { position: absolute; left: 3px; top: 2px; font-size: calc(10px * var(--fs));
   color: #fff; background: rgba(0,0,0,.62); padding: 0 4px; border-radius: 4px; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
 #grid .vp[data-id="vpAtm"] .atm-cell canvas { cursor: default; touch-action: none; }
-/* la cruz de MEDIR solo aparece con Mayús pulsado (v0.7.5) */
-body.measuring-shift #grid .vp[data-id="vpAtm"] .atm-cell canvas,
-body.measuring-shift .modal.atm-big canvas,
-body.measuring-shift #grid .vp[data-id="vpPan"] canvas { cursor: crosshair; }
+/* la cruz de MEDIR: en la panorámica con Mayús pulsado (v0.7.5); en el corte de ATM ampliado con un botón de
+   medida activo (v0.7.14) */
+body.measuring-shift #grid .vp[data-id="vpPan"] canvas,
+.modal.atm-big canvas.measuring { cursor: crosshair; }
 #grid .vp[data-id="vpAtm"] .atm-cell.atm-gap { border: none; background: transparent; }
 /* botón de ampliar de cada corte: discreto, solo se ve al pasar por encima */
 #grid .vp[data-id="vpAtm"] .atm-cell .atm-zoom { position: absolute; right: 2px; top: 2px; width: 20px; height: 20px; padding: 0;
@@ -232,7 +254,8 @@ body.measuring-shift #grid .vp[data-id="vpPan"] canvas { cursor: crosshair; }
 
 /* corte de ATM ampliado y ajuste de polos */
 .modal.atm-big { width: min(1100px, 94vw); max-width: none; gap: 8px; }
-.modal.atm-big .atm-big-head { display: flex; align-items: center; gap: 8px; }
+.modal.atm-big .atm-big-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.modal.atm-big .atm-big-head [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .modal.atm-big .atm-big-wrap { background: #000; border: 1px solid var(--border); border-radius: 8px; height: min(70vh, 720px);
   display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .modal.atm-big canvas { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; cursor: default; touch-action: none; }

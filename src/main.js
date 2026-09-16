@@ -3,7 +3,7 @@ import './theme.css';
 import './app.css';
 import { loadLang, setLang, getLang, t, applyI18n } from './i18n/i18n.js';
 import { buildLayout, orientationLetters, meshCard } from './ui/layout.js';
-import { buildMetadata, renderTable, exportJSON, exportCSV, download } from './ui/metadata.js';
+import { buildMetadata, renderTable, exportJSON, exportCSV, download, updateSummaryPatient } from './ui/metadata.js';
 import { openFeedback, scheduleFeedback, feedbackState } from './ui/feedback.js';
 import { collectFromDataTransfer, collectFromFileList, expandZips, scanDicom, fmtDate } from './core/dicomLoad.js';
 import { isMeshName, guessRole, readMesh } from './core/meshes.js';
@@ -113,12 +113,40 @@ function applyPanels(p) {
     const wrap = $('#wrap-' + side);
     const auto = p[side] === 'auto';
     wrap.classList.toggle('auto', auto);
+    wrap.classList.remove('open');
     const btn = wrap.querySelector('.pin');
     if (btn) btn.textContent = auto ? '📌' : (side === 'left' ? '⟨' : '⟩');
   }
   try { localStorage.setItem(PANELS_KEY, JSON.stringify(p)); } catch (e) { /* nada */ }
   setTimeout(() => V.resize(), 50);
   setTimeout(() => V.resize(), 260);
+}
+/**
+ * Pestaña con flecha de cada panel replegado (v0.7.14): un toque lo despliega y lo deja abierto (otro toque, o
+ * tocar fuera, lo repliega); también vale arrastrarla hacia dentro / hacia fuera. En tabletas no hay ratón
+ * que acercar al borde.
+ */
+function wirePanelTabs() {
+  for (const side of ['left', 'right']) {
+    const wrap = $('#wrap-' + side), hot = wrap.querySelector('.hot');
+    const tab = document.createElement('button'); tab.className = 'tab'; tab.type = 'button'; tab.dataset.i18nTitle = 'pin_tab'; tab.title = t('pin_tab');
+    hot.appendChild(tab);
+    let pd = null;
+    tab.addEventListener('pointerdown', (e) => { pd = { x: e.clientX, moved: false }; tab.classList.add('dragging'); try { tab.setPointerCapture(e.pointerId); } catch (err) { /* nada */ } e.preventDefault(); e.stopPropagation(); });
+    tab.addEventListener('pointermove', (e) => {
+      if (!pd) return;
+      const inward = (e.clientX - pd.x) * (side === 'left' ? 1 : -1);
+      if (inward > 30 && !wrap.classList.contains('open')) { wrap.classList.add('open'); pd.moved = true; }
+      else if (inward < -12 && wrap.classList.contains('open')) { wrap.classList.remove('open'); pd.moved = true; }   // hacia el borde no hay más de 18 px
+    });
+    const end = () => { if (pd && !pd.moved) wrap.classList.toggle('open'); pd = null; tab.classList.remove('dragging'); };
+    tab.addEventListener('pointerup', end); tab.addEventListener('pointercancel', () => { pd = null; tab.classList.remove('dragging'); });
+    tab.addEventListener('click', (e) => e.stopPropagation());
+  }
+  // tocar fuera de un panel desplegado lo repliega
+  document.addEventListener('pointerdown', (e) => {
+    for (const side of ['left', 'right']) { const wrap = $('#wrap-' + side); if (wrap.classList.contains('open') && !wrap.contains(e.target)) wrap.classList.remove('open'); }
+  }, true);
 }
 function togglePanel(side) {
   const next = Object.assign({}, panels);
@@ -160,7 +188,7 @@ function setProgress(p) {
 function setHasCase() {
   const vol = !!current, has = V.hasCase();
   for (const sel of ['#btn-shot', '#btn-rotate', '#view-bar', '#wrap-right', '#g-tools', '#btn-undo', '#btn-redo']) $(sel).classList.toggle('hidden', !has);
-  for (const sel of ['#patient-chip', '#btn-meta', '#vispanel .card.dicom', '#mpr-card', '#btn-cross']) $(sel).classList.toggle('hidden', !vol);
+  for (const sel of ['#patient-chip', '#btn-patient-edit', '#btn-meta', '#vispanel .card.dicom', '#mpr-card', '#btn-cross']) $(sel).classList.toggle('hidden', !vol);
   $('#grid').classList.toggle('hidden', !has);
   $('#main-drop').classList.toggle('hidden', has);
   $$('#view-bar [data-layout]').forEach((b) => { b.disabled = !vol && b.dataset.layout !== 'vp3d'; });
@@ -485,6 +513,49 @@ function watermark() {
   return wmImgs[document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'];
 }
 
+// ---- chip del paciente: nombre · sexo · nacimiento (edad a la fecha del estudio, v0.7.5) · fecha del estudio.
+//      Un clic lo OCULTA (docencia, capturas de pantalla) y otro lo vuelve a mostrar; el lápiz ✎ permite editar
+//      nombre, sexo y nacimiento SOLO para esta sesión (el DICOM no se toca) (v0.7.15).
+let chipHidden = false;
+function renderChip() {
+  const s = current, el = $('#patient-chip');
+  if (!s) { el.textContent = ''; return; }
+  el.classList.toggle('masked', chipHidden);
+  if (chipHidden) { el.textContent = t('pat_hidden'); return; }
+  const yrs = patientAge();
+  const nac = s.birth ? fmtDate(s.birth) + (yrs != null && yrs > 0 && yrs < 120 ? ` (${t('age_years', { n: Math.floor(yrs) })})` : '') : '';
+  const chip = [s.patient, s.sex ? s.sex : '', nac, s.date ? fmtDate(s.date) : ''].filter(Boolean).join(' · ');
+  el.textContent = chip || (s.desc || '');
+}
+function editPatientDialog() {
+  const s = current; if (!s) return;
+  const iso = (d) => { const m = String(d || '').match(/^(\d{4})(\d{2})(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : ''; };
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal patient"><h3>${t('pat_dlg_title')}</h3><div class="hint">${t('pat_dlg_hint')}</div>
+    <label class="frow"><span>${t('pat_name')}</span><input type="text" id="pe-name" maxlength="80" value="${esc(s.patient || '')}"></label>
+    <label class="frow"><span>${t('pat_sex')}</span><select id="pe-sex">
+      <option value="">—</option><option value="M">M · ${t('pat_sex_m')}</option><option value="F">F · ${t('pat_sex_f')}</option><option value="O">O · ${t('pat_sex_o')}</option></select></label>
+    <label class="frow"><span>${t('pat_birth')}</span><input type="date" id="pe-birth" value="${iso(s.birth)}"></label>
+    <div class="mrow"><button class="btn-ghost" id="dlg-cancel">${t('dlg_cancel')}</button>
+    <button class="btn-primary" style="width:auto;min-height:40px;padding:8px 22px" id="dlg-ok">${t('dlg_save')}</button></div></div>`;
+  const sexSel = bg.querySelector('#pe-sex'); sexSel.value = ['M', 'F', 'O'].includes(String(s.sex || '').toUpperCase()) ? String(s.sex).toUpperCase() : '';
+  bg.querySelector('#dlg-cancel').addEventListener('click', () => bg.remove());
+  bg.addEventListener('click', (e) => { if (e.target === bg) bg.remove(); });
+  bg.querySelector('#dlg-ok').addEventListener('click', () => {
+    s.patient = bg.querySelector('#pe-name').value.trim();
+    s.sex = sexSel.value;
+    const b = bg.querySelector('#pe-birth').value;              // AAAA-MM-DD → AAAAMMDD (formato DICOM)
+    s.birth = b ? b.replace(/-/g, '') : '';
+    bg.remove();
+    chipHidden = false; renderChip();
+    updateSummaryPatient(s);
+    $$('.series-item').forEach((el) => { const sm = el.querySelector('small'); if (sm && el.dataset.key === s.key) sm.textContent = `${s.orientation} · ${s.count} ${t('slices')} · ${s.cols}×${s.rows}${s.patient ? ' · ' + s.patient : ''}`; });
+    setStatus(t('st_pat_saved'));
+  });
+  document.body.appendChild(bg);
+  bg.querySelector('#pe-name').focus();
+}
+
 function patientAge() {
   if (!current || !current.birth) return null;
   const p = (s) => { const m = String(s).match(/^(\d{4})(\d{2})(\d{2})/); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; };
@@ -527,12 +598,8 @@ async function openSeries(s) {
     const res = await V.alignAllMeshes(alignStatus);
     setStatus(loaded + ' · ' + res.map((r) => r.item.name + ': ' + alignText(r.align)).join(' · '));
   }
-  // chip de paciente (barra superior, como VOXEL)
-  // fecha de nacimiento con la EDAD a la fecha del estudio, detrás del sexo (v0.7.5)
-  const yrs = patientAge();
-  const nac = s.birth ? fmtDate(s.birth) + (yrs != null && yrs > 0 && yrs < 120 ? ` (${t('age_years', { n: Math.floor(yrs) })})` : '') : '';
-  const chip = [s.patient, s.sex ? s.sex : '', nac, s.date ? fmtDate(s.date) : ''].filter(Boolean).join(' · ');
-  $('#patient-chip').textContent = chip || (s.desc || '');
+  chipHidden = false;
+  renderChip();                        // chip de paciente (barra superior, como VOXEL)
   // sincronizar controles del panel derecho con el estado del render
   syncRenderControls();
   resetCutUI();
@@ -655,13 +722,17 @@ async function ingestPhoto(file) {
   let img;
   try { img = await loadImage(file); } catch (e) { setStatus(t('st_photo_bad')); return; }
   if (!V.softMesh()) { const ok = await runSegmentation(); if (!ok) return; }
+  // la cara se reconoce sobre un render FRONTAL del visor 3D: si estaba oculto (vista de ATM, panorámica o un
+  // corte a solas) el render salía vacío y aparecía el marcado manual sin motivo (v0.7.14)
+  if (!vpShown('vp3d')) { applyLayout('quad'); await new Promise((r) => setTimeout(r, 400)); }
   let res;
   try { res = window.tresd.forceManual ? { fail: 'no_face_3d', lm2: null } : await V.drapePhoto(img, { onStatus: photoStatus }); } catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); return; }
   if (res && res.ok) { finishDrape(res); return; }
   // sin detección automática (en la piel 3D, en la foto o sin MediaPipe): registro manual por puntos
   if (res && (res.fail === 'no_face_3d' || res.fail === 'no_face_photo' || res.fail === 'mediapipe')) {
-    setStatus(t({ no_face_3d: 'st_photo_no_face3d', no_face_photo: 'st_photo_no_face', mediapipe: 'st_photo_mediapipe' }[res.fail]));
-    await manualRegistration(img, res.lm2 || null);
+    const why = t({ no_face_3d: 'st_photo_no_face3d', no_face_photo: 'st_photo_no_face', mediapipe: 'st_photo_mediapipe' }[res.fail]);
+    setStatus(why);
+    await manualRegistration(img, res.lm2 || null, why);
     return;
   }
   const msg = { pose: 'st_photo_pose_fail', no_soft: 'st_photo_no_soft' }[res && res.fail] || 'st_error';
@@ -699,15 +770,15 @@ function refreshPhotoRow() {
 // ---- registro MANUAL (si MediaPipe no reconoce la piel 3D): puntos guiados en la foto y luego en el 3D
 let manualPick = null;   // { img, p2: [[u,v]…], names: [], p3: [], i }
 
-function photoPointsDialog(img, lm2) {
+function photoPointsDialog(img, lm2, why = '') {
   return new Promise((resolve) => {
     const W = img.naturalWidth, H = img.naturalHeight;
     const scale = Math.min(1, (window.innerWidth * 0.8) / W, (window.innerHeight * 0.52) / H);
     const cw = Math.round(W * scale), ch = Math.round(H * scale);
     const bg = document.createElement('div'); bg.className = 'modal-bg';
-    bg.innerHTML = `<div class="modal photo"><h3>${t('dlg_photo_title')}</h3><div class="hint">${t('dlg_photo_hint')}</div>
-      <div class="hint next" id="ph-next"></div><canvas id="ph-canvas" width="${cw}" height="${ch}"></canvas>
-      <div class="mrow"><button class="btn-ghost" id="ph-undo">${t('dlg_undo')}</button><button class="btn-ghost" id="ph-skip">${t('dlg_skip')}</button>
+    bg.innerHTML = `<div class="modal photo" style="width:${Math.max(520, cw + 36)}px"><h3>${t('dlg_photo_title')}</h3>${why ? `<div class="hint warn">${why}</div>` : ''}<div class="hint">${t('dlg_photo_hint')}</div>
+      <div class="hint next" id="ph-next"></div><canvas id="ph-canvas" width="${cw}" height="${ch}" style="width:${cw}px;height:${ch}px;align-self:center"></canvas>
+      <div class="mrow"><button class="btn-ghost" id="ph-undo">${t('dlg_undo')}</button>
       <button class="btn-ghost" id="ph-cancel">${t('dlg_cancel')}</button><button class="btn-primary" id="ph-ok" style="width:auto;min-height:40px;padding:8px 22px">${t('dlg_continue')}</button></div></div>`;
     document.body.appendChild(bg);
     const cv = bg.querySelector('#ph-canvas'), g = cv.getContext('2d');
@@ -720,9 +791,11 @@ function photoPointsDialog(img, lm2) {
       pts.forEach((p, i) => { if (!p) return; const x = p[0] * scale, y = p[1] * scale; g.strokeStyle = '#000'; g.fillStyle = i === cur ? '#FDE047' : '#22D3EE'; g.lineWidth = 2; g.beginPath(); g.arc(x, y, 6, 0, Math.PI * 2); g.fill(); g.stroke(); g.fillStyle = '#fff'; g.font = 'bold 13px sans-serif'; g.fillText(String(i + 1), x + 8, y - 8); });
       const nx = bg.querySelector('#ph-next');
       nx.textContent = cur < pts.length ? t('dlg_photo_next', { name: (cur + 1) + ' · ' + t('pt_' + GUIDED_POINTS[cur].key) }) : '✓';
-      bg.querySelector('#ph-ok').disabled = pts.filter(Boolean).length < 5;
+      bg.querySelector('#ph-ok').disabled = pts.filter(Boolean).length < GUIDED_POINTS.length;   // los 3 (v0.7.15)
     };
-    const pos = (e) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / scale, (e.clientY - r.top) / scale]; };
+    // del píxel de pantalla al píxel de la FOTO: el canvas podía salir estirado por el flex de la ventana (align-items:
+    // stretch) y los clics se mapeaban mal (v0.7.14); ahora tiene tamaño fijo y, por si acaso, se corrige con su rect
+    const pos = (e) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * (cw / r.width) / scale, (e.clientY - r.top) * (ch / r.height) / scale]; };
     cv.addEventListener('pointerdown', (e) => {
       const p = pos(e);
       drag = pts.findIndex((q) => q && Math.hypot(q[0] - p[0], q[1] - p[1]) * scale < 12);
@@ -732,15 +805,14 @@ function photoPointsDialog(img, lm2) {
     cv.addEventListener('pointermove', (e) => { if (drag >= 0) { pts[drag] = pos(e); draw(); } });
     cv.addEventListener('pointerup', () => { drag = -1; });
     bg.querySelector('#ph-undo').addEventListener('click', () => { const last = pts.map((p, i) => (p ? i : -1)).filter((i) => i >= 0).pop(); if (last != null) { pts[last] = null; cur = last; draw(); } });
-    bg.querySelector('#ph-skip').addEventListener('click', () => { if (cur < pts.length) { cur = pts.findIndex((q, i) => i > cur && !q); if (cur < 0) cur = pts.length; draw(); } });
     bg.querySelector('#ph-cancel').addEventListener('click', () => { bg.remove(); resolve(null); });
     bg.querySelector('#ph-ok').addEventListener('click', () => { bg.remove(); resolve(pts); });
     draw();
   });
 }
 
-async function manualRegistration(img, lm2) {
-  const pts = await photoPointsDialog(img, lm2);
+async function manualRegistration(img, lm2, why = '') {
+  const pts = await photoPointsDialog(img, lm2, why);
   if (!pts) { setStatus(t('st_ready')); return; }
   const p2 = [], names = [];
   pts.forEach((p, i) => { if (p) { p2.push(p); names.push(t('pt_' + GUIDED_POINTS[i].key)); } });
@@ -781,8 +853,11 @@ function startPointAlign(item) {
   if (manualPick) cancelManual();
   if (pointAlign) cancelPointAlign(true);
   if (V.state.measureMode) setMeasureMode(null);
-  const prev = { vol: V.state.render.visible, vis: V.getMeshes().map((m) => [m.id, m.visible]) };
+  // se guarda el render entero (preset + ventana + opacidad): la fase del CBCT pone «radiográfico cálido» para
+  // ver los dientes, y al terminar o cancelar se vuelve al que había (v0.7.14, petición de Manuel)
+  const prev = { vol: V.state.render.visible, render: { ...V.state.render }, vis: V.getMeshes().map((m) => [m.id, m.visible]), layout };
   pointAlign = { item, phase: 'src', src: [], dst: [], n: 3, prev };
+  if (layout !== 'vp3d') applyLayout('vp3d');        // render 3D a pantalla completa mientras se marcan los puntos (v0.7.15)
   V.setVolumeVisible(false); $('#dicom-vis').checked = false;
   for (const m of V.getMeshes()) V.setMeshVisible(m.id, m.id === item.id);
   syncMeshVisBoxes();
@@ -807,6 +882,7 @@ function paPhaseDst() {
   for (const m of V.getMeshes()) V.setMeshVisible(m.id, false);
   syncMeshVisBoxes();
   V.setVolumeVisible(true); $('#dicom-vis').checked = true;
+  if (V.state.render.preset !== 'radio') { V.setPreset('radio'); syncRenderControls(); }
   V.reset3D();
   setStatus(t('st_pa_dst'));
   promptPointAlign();
@@ -821,10 +897,13 @@ function paPhaseSrc() {
 }
 function paRestore() {
   const pa = pointAlign; if (!pa) return;
-  V.setVolumeVisible(pa.prev.vol); $('#dicom-vis').checked = pa.prev.vol;
+  Object.assign(V.state.render, pa.prev.render);          // preset y ventana de antes de alinear
+  V.setVolumeVisible(pa.prev.vol); $('#dicom-vis').checked = pa.prev.vol;   // applyRender incluido
+  syncRenderControls();
   for (const [id, vis] of pa.prev.vis) if (V.getMeshes().some((m) => m.id === id)) V.setMeshVisible(id, vis);
   syncMeshVisBoxes();
   V.showMarkers(null);
+  if (pa.prev.layout && pa.prev.layout !== layout) applyLayout(pa.prev.layout);   // vuelve la disposición de antes
   V.reset3D();
   $('#grid').classList.remove('measuring');
   $('#pa-bar').classList.add('hidden');
@@ -1152,10 +1231,12 @@ function redrawTmj(only) {
 }
 
 // ------------------------------------------------------------------ medidas sobre cortes (ATM y panorámica)
-// Desde v0.7.5: se mide con MAYÚSCULAS + arrastrar (el arrastre normal sigue siendo brillo/contraste), el
-// cursor de cruz solo aparece con Mayús pulsado, la etiqueta del valor se arrastra y va en tamaño FIJO de
-// pantalla (antes se escalaba con el canvas y salían enormes y solapadas).
-let atmDrag = null;         // { cell, it, side, cv, a:[px,px], b, lab } mientras se arrastra
+// Desde v0.7.14 en los cortes de ATM NO se mide con Mayús (en tabletas no hay teclado): en el mosaico
+// arrastrar = brillo/contraste (y mover etiquetas); las medidas se hacen en el corte AMPLIADO con los botones
+// «Distancia» (arrastrar) y «Ángulo» (tres toques: extremo, vértice, extremo). La etiqueta del valor se
+// arrastra y va en tamaño de pantalla; en el mosaico se reduce con el tamaño de la casilla (v0.7.14).
+// En la panorámica se sigue midiendo con Mayús + arrastrar.
+let atmDrag = null;         // { cell, it, side, cv, mode: 'label', m, p0, lab0 } mientras se mueve una etiqueta del mosaico
 let atmMeasN = 0;
 let shiftDown = false;
 
@@ -1178,20 +1259,50 @@ function canvasScale(cv) {
   return cv.width / Math.min(r.width, (cv.width / cv.height) * r.height);
 }
 
-/** Punto medio + desplazamiento de la etiqueta de una medida (en píxeles del corte). */
-function measLabelPos(m) {
-  const k = m.lab || [0, 0];
-  return [(m.a[0] + m.b[0]) / 2 + k[0], (m.a[1] + m.b[1]) / 2 + k[1]];
+/**
+ * Tamaño de las medidas en una casilla del MOSAICO de ATM: en casillas pequeñas (~200–300 px) las líneas y
+ * etiquetas de tamaño fijo tapaban el cóndilo (v0.7.14). 1 = tamaño normal (corte ampliado); mínimo 0,7.
+ */
+function gridMeasScale(cv) {
+  const r = cv.getBoundingClientRect();
+  const disp = Math.min(r.width || 0, r.height || 0);
+  return disp ? Math.max(0.7, Math.min(1, disp / 420)) : 1;
+}
+
+/** Ángulo (grados, 0–180) de una medida angular {a, v, b}: entre los rayos v→a y v→b. */
+function measAngle(m) {
+  const u = [m.a[0] - m.v[0], m.a[1] - m.v[1]], w = [m.b[0] - m.v[0], m.b[1] - m.v[1]];
+  return Math.abs(Math.atan2(u[0] * w[1] - u[1] * w[0], u[0] * w[0] + u[1] * w[1])) * 180 / Math.PI;
+}
+/** Texto del valor de una medida: «12,3 mm» o «34,5°». `mm` = mm por píxel del corte. */
+function measText(m, mm) {
+  if (m.type === 'ang') return measAngle(m).toFixed(1) + '°';
+  return (Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1]) * mm).toFixed(1) + ' mm';
 }
 
 /**
- * Pinta una lista de medidas sobre un canvas ya dibujado. `mm` = mm por píxel del corte.
- * Los tamaños van en píxeles de PANTALLA (se multiplican por la escala del canvas).
+ * Posición de la etiqueta de una medida (en píxeles del corte): punto medio de la distancia, o el vértice del
+ * ángulo desplazado hacia dentro por la bisectriz (`gap` px del corte), más el arrastre del usuario (`lab`).
  */
-function drawMeasures(cv, list, mm) {
+function measLabelPos(m, gap = 0) {
+  const k = m.lab || [0, 0];
+  if (m.type !== 'ang') return [(m.a[0] + m.b[0]) / 2 + k[0], (m.a[1] + m.b[1]) / 2 + k[1]];
+  const n = (p) => { const d = Math.hypot(p[0] - m.v[0], p[1] - m.v[1]) || 1; return [(p[0] - m.v[0]) / d, (p[1] - m.v[1]) / d]; };
+  const u = n(m.a), w = n(m.b);
+  let bx = u[0] + w[0], by = u[1] + w[1], bl = Math.hypot(bx, by);
+  if (bl < 1e-3) { bx = -u[1]; by = u[0]; bl = 1; }             // rayos opuestos: perpendicular
+  return [m.v[0] + (bx / bl) * gap + k[0], m.v[1] + (by / bl) * gap + k[1]];
+}
+
+/**
+ * Pinta una lista de medidas sobre un canvas ya dibujado. `mm` = mm por píxel del corte; `f` = factor de
+ * tamaño (1 = normal; menor en las casillas del mosaico). Los tamaños van en píxeles de PANTALLA (se
+ * multiplican por la escala del canvas). Una medida `live` va a trazos (se está dibujando); `noLabel` sin valor.
+ */
+function drawMeasures(cv, list, mm, f = 1) {
   if (!list || !list.length) return;
   const g = cv.getContext('2d');
-  const k = canvasScale(cv);                    // px de canvas por px de pantalla
+  const k = canvasScale(cv) * f;                // px de canvas por px de pantalla (× tamaño)
   const z = cv._imgZoom || 1;                   // px de canvas por px del corte
   const P = (p) => [p[0] * z, p[1] * z];        // del corte al canvas
   const lw = 1.4 * k, dot = 2.6 * k, fs = 11 * k;
@@ -1199,20 +1310,28 @@ function drawMeasures(cv, list, mm) {
   g.font = `600 ${fs.toFixed(1)}px Poppins, sans-serif`;
   g.textBaseline = 'middle';
   for (const m of list) {
-    const d = Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1]) * mm;
-    const a = P(m.a), b = P(m.b);
+    const pts = m.type === 'ang' ? [m.a, m.v, m.b].map(P) : [m.a, m.b].map(P);
     g.strokeStyle = m.color; g.fillStyle = m.color; g.lineWidth = lw;
     g.setLineDash(m.live ? [4 * k, 3 * k] : []);
-    g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+    g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (const q of pts.slice(1)) g.lineTo(q[0], q[1]); g.stroke();
     g.setLineDash([]);
-    for (const p of [a, b]) { g.beginPath(); g.arc(p[0], p[1], dot, 0, 2 * Math.PI); g.fill(); }
-    const [lx, ly] = P(measLabelPos(m));
-    const txt = d.toFixed(1) + ' mm';
+    for (const q of pts) { g.beginPath(); g.arc(q[0], q[1], dot, 0, 2 * Math.PI); g.fill(); }
+    if (m.type === 'ang') {                     // arco en el vértice, por el lado corto
+      const [a, v, b] = pts;
+      const a0 = Math.atan2(a[1] - v[1], a[0] - v[0]);
+      const d = Math.atan2((a[0] - v[0]) * (b[1] - v[1]) - (a[1] - v[1]) * (b[0] - v[0]), (a[0] - v[0]) * (b[0] - v[0]) + (a[1] - v[1]) * (b[1] - v[1]));
+      g.lineWidth = lw * 0.8;
+      g.beginPath(); g.arc(v[0], v[1], 14 * k, a0, a0 + d, d < 0); g.stroke();
+    }
+    if (m.noLabel) continue;
+    const anchor = m.type === 'ang' ? pts[1] : [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2];
+    const [lx, ly] = P(measLabelPos(m, 22 * k / z));
+    const txt = measText(m, mm);
     const wtx = g.measureText(txt).width;
     // guía fina de la etiqueta a la medida cuando se ha separado
     if (m.lab && (m.lab[0] || m.lab[1])) {
       g.globalAlpha = 0.55; g.lineWidth = lw * 0.8;
-      g.beginPath(); g.moveTo((a[0] + b[0]) / 2, (a[1] + b[1]) / 2); g.lineTo(lx, ly); g.stroke();
+      g.beginPath(); g.moveTo(anchor[0], anchor[1]); g.lineTo(lx, ly); g.stroke();
       g.globalAlpha = 1;
     }
     g.fillStyle = 'rgba(0,0,0,.6)';
@@ -1223,26 +1342,24 @@ function drawMeasures(cv, list, mm) {
   g.restore();
 }
 
-/** Medida cuya ETIQUETA cae bajo el punto (px del corte), o null. */
-function measAtLabel(list, cv, p) {
+/** Medida cuya ETIQUETA cae bajo el punto (px del corte), o null. `f` = mismo factor de tamaño que al pintar. */
+function measAtLabel(list, cv, p, f = 1) {
   if (!list) return null;
   const g = cv.getContext('2d');
-  const k = canvasScale(cv), fs = 11 * k, z = cv._imgZoom || 1;
+  const k = canvasScale(cv) * f, fs = 11 * k, z = cv._imgZoom || 1;
   g.font = `600 ${fs.toFixed(1)}px Poppins, sans-serif`;
   const q = [p[0] * z, p[1] * z];               // el punto viene en px del corte; la etiqueta va en px de canvas
   for (let i = list.length - 1; i >= 0; i--) {
-    const m = list[i], mp = measLabelPos(m), lx = mp[0] * z, ly = mp[1] * z;
+    const m = list[i], mp = measLabelPos(m, 22 * k / z), lx = mp[0] * z, ly = mp[1] * z;
     const w = g.measureText('00.0 mm').width;
     if (q[0] >= lx - 3 * k && q[0] <= lx + w + 3 * k && Math.abs(q[1] - ly) <= fs) return m;
   }
   return null;
 }
 
-/** Pinta las medidas guardadas de un corte de ATM (y la que se está arrastrando) sobre su canvas. */
+/** Pinta las medidas guardadas de un corte de ATM sobre su canvas del MOSAICO (tamaño según la casilla). */
 function drawTmjMeas(cv, it, side) {
-  const list = V.getTmjMeas(side, it.family, it.off).slice();
-  if (atmDrag && atmDrag.side === side && atmDrag.it.key === it.key && atmDrag.b) list.push({ a: atmDrag.a, b: atmDrag.b, color: atmDrag.color, live: true });
-  drawMeasures(cv, list, it.img.step);
+  drawMeasures(cv, V.getTmjMeas(side, it.family, it.off), it.img.step, gridMeasScale(cv));
 }
 
 /** Posición del ratón en PÍXELES DEL CORTE (el canvas se pinta con object-fit: contain). */
@@ -1263,13 +1380,14 @@ function atmWheel(ev) {
   redrawTmj();
 }
 
-/** Mayús pulsado: cursor de cruz en las zonas donde se puede medir. */
+/** Mayús pulsado: cursor de cruz en las zonas donde se puede medir (panorámica). */
 function setShift(on) {
   if (shiftDown === on) return;
   shiftDown = on;
   document.body.classList.toggle('measuring-shift', on);
 }
 
+/** Mosaico de ATM: pulsar sobre la ETIQUETA de una medida la agarra para moverla; lo demás es brillo/contraste. */
 function atmDown(ev) {
   const cell = ev.target.closest('.atm-cell:not(.atm-gap)'); if (!cell || !V.state.tmj || ev.button !== 0) return;
   const serie = V.state.tmj.series[cell.dataset.side]; if (!serie) return;
@@ -1277,33 +1395,25 @@ function atmDown(ev) {
   const cv = cell.querySelector('canvas');
   const p = atmPos(cv, ev);
   const side = cell.dataset.side;
-  const lab = measAtLabel(V.getTmjMeas(side, it.family, it.off), cv, p);
-  if (!ev.shiftKey && !lab) return;                 // sin Mayús y fuera de una etiqueta: brillo/contraste
-  atmDrag = lab
-    ? { cell, it, side, cv, mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() }
-    : { cell, it, side, cv, mode: 'new', a: p, b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+  const lab = measAtLabel(V.getTmjMeas(side, it.family, it.off), cv, p, gridMeasScale(cv));
+  if (!lab) return;
+  atmDrag = { cell, it, side, cv, mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() };
   try { cv.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
   ev.preventDefault(); ev.stopPropagation();
 }
 function atmMove(ev) {
   if (!atmDrag) return;
   const p = atmPos(atmDrag.cv, ev);
-  if (atmDrag.mode === 'label') atmDrag.m.lab = [atmDrag.lab0[0] + (p[0] - atmDrag.p0[0]), atmDrag.lab0[1] + (p[1] - atmDrag.p0[1])];
-  else atmDrag.b = p;
+  atmDrag.m.lab = [atmDrag.lab0[0] + (p[0] - atmDrag.p0[0]), atmDrag.lab0[1] + (p[1] - atmDrag.p0[1])];
   redrawTmj(atmDrag.cell);                 // solo el corte que se está tocando: así va fluido
 }
 function atmUp() {
   const d = atmDrag; atmDrag = null;
-  if (!d) return;
-  if (d.mode === 'label') { redrawTmj(d.cell); return; }
-  if (!d.b) { redrawTmj(d.cell); return; }
-  const len = Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * d.it.img.step;
-  if (len < 1) { redrawTmj(d.cell); return; }           // un clic suelto no es una medida
-  addAtmMeas(d.side, d.it, { a: d.a, b: d.b, color: d.color, lab: [0, 0] }, len);
+  if (d) redrawTmj(d.cell);
 }
 
-/** Guarda una medida (mosaico o corte ampliado) con deshacer/rehacer y aviso en la barra de estado. */
-function addAtmMeas(side, it, m, len) {
+/** Guarda una medida (distancia o ángulo) de un corte de ATM con deshacer/rehacer y aviso en la barra de estado. */
+function addAtmMeas(side, it, m) {
   const key = [side, it.family, it.off];
   V.addTmjMeas(key[0], key[1], key[2], m);
   atmMeasN++;
@@ -1314,25 +1424,34 @@ function addAtmMeas(side, it, m, len) {
   });
   refreshHistoryButtons();
   redrawTmj();
-  setStatus(t('st_atm_meas', { v: len.toFixed(1) }));
+  setStatus(t(m.type === 'ang' ? 'st_atm_ang' : 'st_atm_meas', { v: measText(m, it.img.step) }));
 }
 
 // ------------------------------------------------------------------ corte de ATM ampliado (modal)
-let atmBig = null;          // { side, key, bg, cv, drag }
+let atmBig = null;          // { side, key, bg, cv, tool: null|'len'|'ang', drag, pts, cur }
 
-/** Abre un corte de ATM a pantalla grande: se mide y se cambia de corte igual que en el mosaico. */
+/**
+ * Abre un corte de ATM a pantalla grande. Rueda = cambiar de corte; arrastrar = brillo/contraste; con el botón
+ * «Distancia» arrastrar mide; con «Ángulo» se dan tres toques (extremo, vértice, extremo). Sin Mayús: vale
+ * para tabletas (v0.7.14). Las etiquetas de las medidas se arrastran siempre.
+ */
 function openAtmBig(side, key) {
   if (!V.state.tmj || atmBig) return;
   const bg = document.createElement('div'); bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal atm-big"><div class="atm-big-head"><h3 id="ab-title"></h3>
-      <span class="spacer" style="flex:1"></span><button class="btn-ghost" id="ab-close">${t('dlg_close')}</button></div>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn-ghost" id="ab-len" aria-pressed="false" title="${t('ab_len_tip')}">${t('ab_len')}</button>
+      <button class="btn-ghost" id="ab-ang" aria-pressed="false" title="${t('ab_ang_tip')}">${t('ab_ang')}</button>
+      <button class="btn-ghost" id="ab-close">${t('dlg_close')}</button></div>
     <div class="atm-big-wrap"><canvas id="ab-canvas"></canvas></div>
-    <div class="hint" id="ab-hint">${t('atm_big_hint')}</div></div>`;
+    <div class="hint" id="ab-hint"></div></div>`;
   document.body.appendChild(bg);
-  atmBig = { side, key, bg, cv: bg.querySelector('#ab-canvas'), drag: null };
+  atmBig = { side, key, bg, cv: bg.querySelector('#ab-canvas'), tool: null, drag: null, pts: [], cur: null };
   const close = () => { bg.remove(); atmBig = null; };
   bg.querySelector('#ab-close').addEventListener('click', close);
   bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+  bg.querySelector('#ab-len').addEventListener('click', () => setAtmBigTool(atmBig.tool === 'len' ? null : 'len'));
+  bg.querySelector('#ab-ang').addEventListener('click', () => setAtmBigTool(atmBig.tool === 'ang' ? null : 'ang'));
   const cv = atmBig.cv;
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -1345,31 +1464,65 @@ function openAtmBig(side, key) {
     const it = atmBigItem(); if (!it) return;
     const p = atmPos(cv, e);
     const lab = measAtLabel(V.getTmjMeas(side, it.family, it.off), cv, p);
-    if (!e.shiftKey && !lab) return;               // medir = Mayús + arrastrar; las etiquetas se mueven solas
-    atmBig.drag = lab
-      ? { mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() }
-      : { mode: 'new', a: p, b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+    if (lab) atmBig.drag = { mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() };
+    else if (atmBig.tool === 'len') atmBig.drag = { mode: 'new', a: p, b: null, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+    else if (atmBig.tool === 'ang') atmBig.drag = { mode: 'tap', p0: p, x: e.clientX, y: e.clientY };
+    else atmBig.drag = { mode: 'win', x: e.clientX, y: e.clientY, w: V.getTmjWindow() };
     try { cv.setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
     e.preventDefault();
   });
   cv.addEventListener('pointermove', (e) => {
-    if (!atmBig || !atmBig.drag) return;
-    const p = atmPos(cv, e), d = atmBig.drag;
+    if (!atmBig) return;
+    const d = atmBig.drag;
+    if (atmBig.tool === 'ang') { atmBig.cur = atmPos(cv, e); if (atmBig.pts.length) drawAtmBig(); }
+    if (!d) return;
+    if (d.mode === 'win') {
+      const w0 = d.w, ww = Math.max(20, (w0.upper - w0.lower) + (e.clientX - d.x) * 6), wl = (w0.upper + w0.lower) / 2 + (e.clientY - d.y) * 6;
+      V.setTmjWindow({ lower: wl - ww / 2, upper: wl + ww / 2 }); redrawTmj();
+      return;
+    }
+    const p = atmPos(cv, e);
     if (d.mode === 'label') d.m.lab = [d.lab0[0] + (p[0] - d.p0[0]), d.lab0[1] + (p[1] - d.p0[1])];
-    else d.b = p;
+    else if (d.mode === 'new') d.b = p;
     drawAtmBig();
   });
-  const up = () => {
+  const up = (e) => {
     if (!atmBig || !atmBig.drag) return;
     const d = atmBig.drag; atmBig.drag = null;
-    const it = atmBigItem();
-    if (d.mode === 'label' || !d.b || !it) { drawAtmBig(); return; }
-    const len = Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * it.img.step;
-    if (len < 1) { drawAtmBig(); return; }
-    addAtmMeas(side, it, { a: d.a, b: d.b, color: d.color, lab: [0, 0] }, len);
+    const it = atmBigItem(); if (!it) return;
+    if (d.mode === 'tap') {                       // ángulo: un toque (sin arrastre) añade un punto
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8) { drawAtmBig(); return; }
+      atmBig.pts.push(d.p0);
+      if (atmBig.pts.length >= 3) {
+        const [a, v, b] = atmBig.pts; atmBig.pts = [];
+        addAtmMeas(side, it, { type: 'ang', a, v, b, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length], lab: [0, 0] });
+      } else drawAtmBig();
+      atmBigHint();
+      return;
+    }
+    if (d.mode !== 'new' || !d.b) { drawAtmBig(); return; }
+    if (Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * it.img.step < 1) { drawAtmBig(); return; }   // un clic suelto no es una medida
+    addAtmMeas(side, it, { a: d.a, b: d.b, color: d.color, lab: [0, 0] });
   };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  atmBigHint();
   drawAtmBig();
+}
+/** Cambia la herramienta del corte ampliado (null = brillo/contraste). Cancela un ángulo a medias. */
+function setAtmBigTool(tool) {
+  if (!atmBig) return;
+  atmBig.tool = tool; atmBig.pts = []; atmBig.drag = null;
+  atmBig.bg.querySelector('#ab-len').setAttribute('aria-pressed', String(tool === 'len'));
+  atmBig.bg.querySelector('#ab-ang').setAttribute('aria-pressed', String(tool === 'ang'));
+  atmBig.cv.classList.toggle('measuring', !!tool);
+  atmBigHint();
+  drawAtmBig();
+}
+function atmBigHint() {
+  if (!atmBig) return;
+  const n = atmBig.pts.length;
+  const k = atmBig.tool === 'len' ? 'ab_hint_len' : atmBig.tool === 'ang' ? (n === 0 ? 'ab_hint_ang1' : n === 1 ? 'ab_hint_ang2' : 'ab_hint_ang3') : 'atm_big_hint';
+  atmBig.bg.querySelector('#ab-hint').textContent = t(k);
 }
 function atmBigItem() {
   if (!atmBig || !V.state.tmj) return null;
@@ -1383,6 +1536,9 @@ function drawAtmBig() {
   const list = V.getTmjMeas(atmBig.side, it.family, it.off).slice();
   const d = atmBig.drag;
   if (d && d.mode === 'new' && d.b) list.push({ a: d.a, b: d.b, color: d.color, live: true });
+  const pts = atmBig.pts, color = V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length];
+  if (pts.length === 1) list.push({ a: pts[0], b: atmBig.cur || pts[0], color, live: true, noLabel: true });
+  else if (pts.length === 2) list.push({ type: 'ang', a: pts[0], v: pts[1], b: atmBig.cur || pts[1], color, live: true });
   drawMeasures(cv, list, it.img.step);
   atmBig.bg.querySelector('#ab-title').textContent = `${t(atmBig.side === 'R' ? 'atm_side_r' : 'atm_side_l')} · ${atmLabel(it)}`;
 }
@@ -1520,6 +1676,7 @@ function setPanoEdit(on) {
   else if (!panEdit && was) { $('#pan-curve').checked = archBeforeEdit; V.setArchVisible(archBeforeEdit); }
   V.setPanoEdit(panEdit);
   $('.vp[data-id="vpAx"]').classList.toggle('editing', panEdit);
+  $('#pe-bar').classList.toggle('hidden', !panEdit);          // «Terminar de editar» sobre el axial (v0.7.15)
   applyLayout(panEdit ? 'panEdit' : 'vpPan', false);
   // el salto a la altura de los dientes se repite TRAS la disposición: al cambiar de tamaño el visor,
   // Cornerstone reencuadra y el corte se quedaba donde estuviera (había que buscar los dientes a mano)
@@ -1589,7 +1746,10 @@ const vpShown = (id) => !$(`.vp[data-id="${id}"]`).classList.contains('hidden');
 function shotPng() {
   if (vpShown('vpAtm')) return shotDom($('#atm-grid'));
   if (vpShown('vpPan')) return shotDom($('.vp[data-id="vpPan"] .pan-wrap'));
-  return V.screenshot(visibleViewports(), watermark());
+  // 2×2 y demás disposiciones: también por lo que se VE. `viewer.screenshot` pegaba cada canvas a su tamaño
+  // interno y el del render 3D no tiene el mismo que los de los cortes: en la captura salían los cortes
+  // pequeños en una esquina (v0.7.15). Así además entran las siluetas de las mallas.
+  return shotDom($('#grid'));
 }
 
 /**
@@ -1759,8 +1919,8 @@ function wireUI() {
       tmjPicked(id, [e.clientX - r.left, e.clientY - r.top]);
     });
   }
-  // Sobre el mosaico de ATM: arrastrar = MEDIR; con Mayúsculas (o el botón derecho) = brillo/contraste;
-  // rueda = moverse por los cortes de esa familia, de milímetro en milímetro.
+  // Sobre el mosaico de ATM: arrastrar = brillo/contraste (las etiquetas de las medidas se arrastran; medir
+  // se hace en el corte ampliado, v0.7.14); rueda = moverse por los cortes de esa familia, de mm en mm.
   const grid = $('#atm-grid');
   let tdrag = null;
   grid.addEventListener('wheel', atmWheel, { passive: false });
@@ -1783,7 +1943,7 @@ function wireUI() {
   grid.addEventListener('pointerdown', (e) => {
     if (!V.state.tmj || e.target.closest('.atm-zoom')) return;
     const cell = e.target.closest('.atm-cell:not(.atm-gap)');
-    if (cell && !e.shiftKey && e.button === 0) {
+    if (cell && e.button === 0) {
       const key = cell.dataset.side + '|' + cell.dataset.key, now = performance.now();
       if (lastTap.key === key && now - lastTap.t < 450) {
         lastTap = { t: 0, key: '' };
@@ -1793,7 +1953,7 @@ function wireUI() {
       }
       lastTap = { t: now, key };
     }
-    atmDown(e);                                   // medir (Mayús) o mover una etiqueta
+    atmDown(e);                                   // mover una etiqueta
     if (atmDrag) return;
     tdrag = { x: e.clientX, y: e.clientY, w: V.getTmjWindow() }; grid.setPointerCapture(e.pointerId); e.preventDefault();
   });
@@ -1806,7 +1966,7 @@ function wireUI() {
   const tend = () => { if (tdrag) { tdrag = null; return; } atmUp(); };
   grid.addEventListener('pointerup', tend); grid.addEventListener('pointercancel', tend);
   // exportar mallas: botón del panel derecho y clic derecho sobre el propio panel
-  // Mayús pulsado = modo medir sobre los cortes de ATM y la panorámica (solo entonces sale la cruz)
+  // Mayús pulsado = modo medir sobre la panorámica (solo entonces sale la cruz)
   window.addEventListener('keydown', (e) => { if (e.key === 'Shift') setShift(true); });
   window.addEventListener('keyup', (e) => { if (e.key === 'Shift') setShift(false); });
   window.addEventListener('blur', () => setShift(false));
@@ -1823,7 +1983,7 @@ function wireUI() {
     refreshHistoryButtons();
     setStatus(t('st_atm_meas_clear'));
   });
-  for (const ev of ['pointerdown', 'pointerup', 'mousedown', 'click']) { $('#aw-bar').addEventListener(ev, (e) => e.stopPropagation()); $('#atm-bar').addEventListener(ev, (e) => e.stopPropagation()); $('#pd-bar').addEventListener(ev, (e) => e.stopPropagation()); }
+  for (const ev of ['pointerdown', 'pointerup', 'mousedown', 'click']) for (const id of ['#aw-bar', '#atm-bar', '#pd-bar', '#pe-bar']) $(id).addEventListener(ev, (e) => e.stopPropagation());
   // deshacer / rehacer
   $('#btn-undo').addEventListener('click', () => doUndo());
   $('#btn-redo').addEventListener('click', () => doRedo());
@@ -1838,6 +1998,8 @@ function wireUI() {
   $('#pan-mip').addEventListener('change', () => showPanoramic());
   $('#pan-curve').addEventListener('change', (e) => V.setArchVisible(e.target.checked));
   $('#pan-edit').addEventListener('click', () => setPanoEdit(!panEdit));
+  $('#pe-done').addEventListener('click', () => setPanoEdit(false));
+  $('#pe-reset').addEventListener('click', () => $('#pan-reset').click());
   $('#pan-clear').addEventListener('click', () => {
     const prev = V.getPanoMeas().slice();
     if (!prev.length) return;
@@ -1946,9 +2108,12 @@ function wireUI() {
   $('#btn-theme').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
   $('#btn-font').addEventListener('click', (e) => fontMenu(e.currentTarget));
   $$('.pin').forEach((b) => b.addEventListener('click', () => togglePanel(b.dataset.pin)));
+  wirePanelTabs();
   $('#btn-lang').addEventListener('click', () => { setLang(getLang() === 'es' ? 'en' : 'es'); afterLangChange(); });
   $$('.legal-links a[data-legal]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); showLegal(a.dataset.legal, { onLang: afterLangChange }); }));
-  $('#btn-feedback').addEventListener('click', (e) => { e.preventDefault(); openFeedback(); });
+  $('#btn-feedback').addEventListener('click', () => openFeedback());
+  $('#patient-chip').addEventListener('click', () => { if (!current) return; chipHidden = !chipHidden; renderChip(); });
+  $('#btn-patient-edit').addEventListener('click', editPatientDialog);
   $('#btn-help').addEventListener('click', () => alert(t('help_text') + '\n\n' + t('about', { v: VERSION })));
   $('#btn-shot').addEventListener('click', () => {
     const url = shotPng();
@@ -2019,7 +2184,7 @@ function wireUI() {
 
   // teclado: Escape cancela la medición / cierra metadatos; Ctrl+Z / Ctrl+Y (o Ctrl+Mayús+Z) deshacen / rehacen
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { if (V.state.measureMode) setMeasureMode(null); if (manualPick) { cancelManual(); setStatus(t('st_ready')); } if (pointAlign) cancelPointAlign(); if (airwayPick) cancelAirway(); if (tmjPick) cancelTmj(); if (panDraw) cancelPanDraw(); $('#meta-drawer').classList.remove('open'); }
+    if (e.key === 'Escape') { if (V.state.measureMode) setMeasureMode(null); if (manualPick) { cancelManual(); setStatus(t('st_ready')); } if (pointAlign) cancelPointAlign(); if (airwayPick) cancelAirway(); if (tmjPick) cancelTmj(); if (panDraw) cancelPanDraw(); if (atmBig && atmBig.pts.length) { atmBig.pts = []; atmBigHint(); drawAtmBig(); } $('#meta-drawer').classList.remove('open'); }
     const tag = (e.target && e.target.tagName) || '';
     if ((e.ctrlKey || e.metaKey) && !/INPUT|TEXTAREA|SELECT/.test(tag)) {
       const k = e.key.toLowerCase();

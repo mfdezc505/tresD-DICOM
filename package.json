@@ -1,11 +1,11 @@
 {
   "name": "tresd-dicom",
-  "version": "0.7.13",
+  "version": "0.7.15",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/version_stamp.mjs",
     "preview": "vite preview",
     "test": "node tests/smoke.mjs && node tests/loaders.mjs"
   },
