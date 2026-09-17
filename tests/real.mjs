@@ -63,6 +63,7 @@ const poseError = (role) => page.evaluate(([role, P]) => {
 await page.goto('http://localhost:8771/'); await page.waitForTimeout(1200);
 await page.setInputFiles('#in-folder', '/tmp/testdata/cbct_half');
 await page.waitForFunction(() => /^(Cargado|Error|No se|Volumen)/.test(document.querySelector('#status-text').textContent), null, { timeout: 300000 });
+await page.check('#sil-vis'); await page.waitForTimeout(300);   // v0.8.3: las siluetas van apagadas por defecto; estas pruebas las necesitan
 await page.waitForTimeout(1000);
 
 // 1) alineación automática con dientes reales
@@ -98,19 +99,23 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(800);
 check(await page.locator('.vp[data-id="vpAx"]').isVisible(), '[2] al cancelar vuelve el 2×2');
 await page.click('[data-layout="vp3d"]'); await page.waitForTimeout(2000);
 await page.click('[data-view="frontal"]'); await page.waitForTimeout(1500);
+const box = await page.locator('#vp3d').boundingBox();
+await page.click('#mesh-cards .card[data-role="upper"] .m-points'); await page.waitForTimeout(900);
+check(await page.locator('#pa-bar').isVisible(), '[2] barra de puntos visible');
+// v0.8.3: al empezar, el escáner se encuadra y se ACERCA (zoom ×1,6): las posiciones en pantalla se calculan ya con esa cámara
 const pts2d = await page.evaluate(() => {
   const V = window.tresd.V; const m = V.getMeshes().find((x) => x.role === 'upper');
   const vp = V.state.engine.getViewport('vp3d'); const p = m.pts; const n = p.length / 3;
-  // tres vértices bien repartidos y anteriores (y mínimo en LPS = frente): izquierda, centro, derecha
+  // tres vértices bien repartidos (hasta v0.8.3, anteriores; ahora del lado derecho, ver abajo)
   const cand = []; for (let i = 0; i < n; i += 7) cand.push([p[3 * i], p[3 * i + 1], p[3 * i + 2]]);
-  cand.sort((a, b) => a[1] - b[1]); const front = cand.slice(0, Math.floor(cand.length * 0.15));
-  front.sort((a, b) => a[0] - b[0]);
+  // v0.8.4: la alineación por puntos se hace en vista DERECHA: vértices del lado derecho (x mínimo en LPS), repartidos de delante atrás
+  cand.sort((a, b) => a[0] - b[0]); const front = cand.slice(0, Math.floor(cand.length * 0.15));
+  front.sort((a, b) => a[1] - b[1]);
   const pick = [front[Math.floor(front.length * 0.1)], front[Math.floor(front.length * 0.5)], front[Math.floor(front.length * 0.9)]];
+  window.__paPick = pick;
   return pick.map((w) => vp.worldToCanvas(w));
 });
-const box = await page.locator('#vp3d').boundingBox();
-await page.click('#mesh-cards .card[data-role="upper"] .m-points'); await page.waitForTimeout(500);
-check(await page.locator('#pa-bar').isVisible(), '[2] barra de puntos visible');
+
 check(await page.evaluate(() => !window.tresd.V.state.render.visible), '[2] fase 1: el CBCT se oculta');
 for (const [x, y] of pts2d) { await page.mouse.click(box.x + x, box.y + y); await page.waitForTimeout(600); }
 await page.waitForTimeout(500);
@@ -118,8 +123,13 @@ check(/FASE 2|CBCT/.test(await page.textContent('#pa-text')), '[2] tras 3 puntos
 check(await page.evaluate(() => window.tresd.V.state.render.visible), '[2] fase 2: el CBCT se muestra');
 check((await page.evaluate(() => window.tresd.V.state.render.preset + '|' + document.querySelector('#dicom-preset').value)) === 'radio|radio', '[2] fase 2: render «radiográfico cálido» para ver los dientes (v0.7.14)');
 await shot('r02_puntos_fase2.png');
-// los MISMOS puntos en pantalla, ahora sobre los dientes del CBCT (escáner ya alineado → mismo sitio ± mm)
-for (const [x, y] of pts2d) { await page.mouse.click(box.x + x + 2, box.y + y + 2); await page.waitForTimeout(600); }
+// los MISMOS puntos del mundo, ahora sobre los dientes del CBCT (escáner ya alineado → mismo sitio ± mm). v0.8.3: en la
+// fase del CBCT la cámara se centra en los dientes y se acerca, así que se recalculan sus posiciones en pantalla
+const zoom2 = await page.evaluate(() => window.tresd.V.getEngine().getViewport('vp3d').getCamera().parallelScale);
+console.log(`   fase 2: escala paralela ${zoom2.toFixed(1)} mm (encuadre de los dientes)`);
+check(zoom2 < 60, '[2] fase 2: el CBCT se ve de cerca, centrado en los dientes (v0.8.3)');
+const pts2b = await page.evaluate(() => { const vp = window.tresd.V.state.engine.getViewport('vp3d'); return window.__paPick.map((w) => vp.worldToCanvas(w)); });
+for (const [x, y] of pts2b) { await page.mouse.click(box.x + x + 2, box.y + y + 2); await page.waitForTimeout(600); }
 await page.waitForFunction(() => /alineado por puntos|no se pudo|Error|Ahí no hay/.test(document.querySelector('#status-text').textContent), null, { timeout: 300000 });
 console.log('[2]', await status());
 check(/alineado por puntos/.test(await status()), '[2] alineado por puntos');

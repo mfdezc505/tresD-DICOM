@@ -174,44 +174,64 @@ export function refineCondyle(smp, seed, thr, midX = 0) {
   // otra cosa (cuello, coronoides, temporal) y se conservan los polos de siempre.
   const w0 = Math.hypot(lat[0] - med[0], lat[1] - med[1]), w1 = Math.hypot(wide.lat[0] - wide.med[0], wide.lat[1] - wide.med[1]);
   const d0 = norm([lat[0] - med[0], lat[1] - med[1], 0]), d1 = norm([wide.lat[0] - wide.med[0], wide.lat[1] - wide.med[1], 0]);
-  // (la parte alta suele estar pegada a la fosa y su eje sale sesgado: se toleran hasta 50° de diferencia)
-  if (w1 < 0.85 * w0 || Math.abs(dot(d0, d1)) < Math.cos((50 * Math.PI) / 180)) return first;
+  // v0.8.3: la anchura medio-lateral de una cabeza adulta va de 13 a 25 mm; fuera de eso (o con el eje a más
+  // de 60° del primero: la mancha era otra cosa) se conservan los polos de siempre
+  if (w1 < Math.min(11, 0.8 * w0) || w1 > 27 || Math.abs(dot(d0, d1)) < Math.cos((60 * Math.PI) / 180)) return first;
   return polesFrom(wide.med, wide.lat, use.length, apex, midX);
 }
 
 /**
- * Polos medial y lateral sobre el CONTORNO de la sección axial más ancha de la cabeza del cóndilo: nivel de
- * `bestAxialOffset`, componente aislado de hueso, eje por PCA (limitado a 45° de la horizontal) y los
- * extremos del componente a lo largo de ese eje (media de los 3 píxeles más extremos). null si no hay mancha.
+ * Polos medial y lateral de la CABEZA del cóndilo en 3D (v0.8.3, como `derive_condyle_poles` de VOXEL pero
+ * sobre el CBCT): la huella de la cabeza es la mancha aislada de hueso de la sección axial más ancha
+ * (`bestAxialOffset`); sobre cada columna de esa huella se sube desde 4 mm por debajo de ese nivel hasta el
+ * TECHO del cóndilo, que es donde aparece el ESPACIO ARTICULAR (un hueco ≥ 1,2 mm sin hueso) — así el temporal
+ * (fosa, eminencia) queda fuera aunque esté a 2 mm. De todos esos vóxeles de la cabeza, el polo MEDIAL es el
+ * más medial y el LATERAL el más lateral (media de los 3 más extremos): la definición anatómica, y no los
+ * extremos del eje de una elipse (PCA), que se torcían hacia anterior-lateral / posterior-medial.
+ * Devuelve { med, lat, off } o null si no hay mancha.
  */
 export function polesAtWidest(smp, pole, thr, midX = 0) {
   const off = bestAxialOffset(smp, pole, thr);
   const st = 0.3, half = 18;
-  const img = samplePlane(smp, { c: addS(pole.center, SI, off), normal: SI, ux: LEFT, up: ANT, half: [half, half], step: st });
+  const level = addS(pole.center, SI, off);
+  const img = samplePlane(smp, { c: level, normal: SI, ux: LEFT, up: ANT, half: [half, half], step: st });
   const pix = isolatedBlob(img, thr, 7 / st, true);
   if (!pix || pix.length < 40) return null;
-  const w = img.w;
-  const pts = pix.map((i) => [i % w, Math.floor(i / w)]);
-  let cx = 0, cy = 0; for (const p of pts) { cx += p[0]; cy += p[1]; } cx /= pts.length; cy /= pts.length;
-  let sxx = 0, sxy = 0, syy = 0;
-  for (const p of pts) { const a = p[0] - cx, b = p[1] - cy; sxx += a * a; sxy += a * b; syy += b * b; }
-  const tr = sxx + syy, dt = sxx * syy - sxy * sxy;
-  const l1 = tr / 2 + Math.sqrt(Math.max(0, (tr * tr) / 4 - dt));
-  let ax = Math.abs(sxy) > 1e-9 ? [l1 - syy, sxy] : (sxx >= syy ? [1, 0] : [0, 1]);
-  const ln = Math.hypot(ax[0], ax[1]) || 1; ax = [ax[0] / ln, ax[1] / ln];
-  if (ax[0] < 0) ax = [-ax[0], -ax[1]];
-  const ang = Math.atan2(ax[1], ax[0]), lim = Math.PI / 4;
-  if (Math.abs(ang) > lim) ax = [Math.cos(Math.sign(ang) * lim), Math.sin(Math.sign(ang) * lim)];
-  const proj = pts.map((p) => (p[0] - cx) * ax[0] + (p[1] - cy) * ax[1]);
-  const order = pts.map((_, i) => i).sort((a, b) => proj[a] - proj[b]);
-  const k = Math.min(3, order.length);
-  // los polos van SOBRE la recta del eje (centroide ± extensión): así el segmento medial-lateral tiene
-  // exactamente la dirección del eje y no la que marquen dos píxeles sueltos del contorno
-  const ext = (list) => list.reduce((s, i) => s + proj[i], 0) / list.length;
-  const eA = ext(order.slice(0, k)), eB = ext(order.slice(-k));
-  const pA = planeToWorld(img, cx + ax[0] * eA, cy + ax[1] * eA), pB = planeToWorld(img, cx + ax[0] * eB, cy + ax[1] * eB);
-  const [med, lat] = Math.abs(pA[0] - midX) <= Math.abs(pB[0] - midX) ? [pA, pB] : [pB, pA];
-  return { med, lat, off };
+  const w = img.w, h = img.h;
+  // huella dilatada 2 px (0,6 mm): la cortical más externa a veces queda justo fuera de la mancha
+  const mask = new Uint8Array(w * h);
+  for (const i of pix) { const x = i % w, y = (i - x) / w; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h) mask[yy * w + xx] = 1; } }
+  // subir columna a columna hasta el espacio articular
+  const zStep = 0.35, zLo = -3, zHi = 6, gapMm = 1.0;      // la cúpula sube 4-7 mm sobre la sección más ancha
+  const nz = Math.round((zHi - zLo) / zStep) + 1;
+  const levels = Array.from({ length: nz }, () => []);      // vóxeles de hueso de la cabeza por nivel
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      if (!mask[j * w + i]) continue;
+      const base = planeToWorld(img, i, j);
+      let gap = 0, seen = false;
+      for (let q = 0; q < nz; q++) {
+        const dz = zLo + q * zStep, p = [base[0], base[1], base[2] + dz];
+        if (smp.value(p) >= thr) { levels[q].push(p); seen = true; gap = 0; }
+        else if (seen && dz > 0) { gap += zStep; if (gap >= gapMm) break; }   // techo del cóndilo: espacio articular
+      }
+    }
+  }
+  // el nivel en que la cabeza es MÁS ANCHA de medial a lateral; los polos son sus extremos en X (media de los 3
+  // más extremos de cada lado), los dos a la misma altura, que es como se ven en el corte axial del diálogo
+  let best = null;
+  for (let q = 0; q < nz; q++) {
+    const pts = levels[q]; if (pts.length < 20) continue;
+    const order = pts.map((_, i) => i).sort((a, b) => pts[a][0] - pts[b][0]);
+    const k = Math.min(3, order.length);
+    const mean = (list) => { const s = [0, 0, 0]; for (const i of list) { s[0] += pts[i][0]; s[1] += pts[i][1]; s[2] += pts[i][2]; } return s.map((v) => v / list.length); };
+    const pA = mean(order.slice(0, k)), pB = mean(order.slice(-k));
+    const width = Math.abs(pB[0] - pA[0]);
+    if (!best || width > best.width) best = { pA, pB, width, q };
+  }
+  if (!best) return null;
+  const [med, lat] = Math.abs(best.pA[0] - midX) <= Math.abs(best.pB[0] - midX) ? [best.pA, best.pB] : [best.pB, best.pA];
+  return { med, lat, off: off + zLo + best.q * zStep };
 }
 
 /**

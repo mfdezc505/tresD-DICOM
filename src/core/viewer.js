@@ -3,7 +3,7 @@
 // (cortes MPR ortográficos). Todo el estado del caso vive aquí (módulo singleton).
 import {
   init as csInit, RenderingEngine, Enums, volumeLoader, setVolumesForViewports, cache, eventTarget,
-  getRenderingEngine,
+  getRenderingEngine, utilities as csUtils,
 } from '@cornerstonejs/core';
 import * as csTools from '@cornerstonejs/tools';
 import { init as loaderInit, wadouri, prefetchPart10Instance } from '@cornerstonejs/dicom-image-loader';
@@ -16,21 +16,25 @@ import { MprPlanes } from './mprPlanes.js';
 import { Silhouettes } from './contours.js';
 import { decimationFactor, buildDecimatedVolume } from './bigVolume.js';
 import { buildRenderVolume, removeRenderVolume } from './renderVolume.js';
+import { buildPointCloud, buildWireframe } from './pointCloud.js';
 import vtkLight from '@kitware/vtk.js/Rendering/Core/Light';
-import { MeshLayer, readMesh, writeSTL } from './meshes.js';
+import { MeshLayer, readMesh, writeSTL, writePLY } from './meshes.js';
 import { patientFrame } from './orient.js';
 import { enamelTargets, pickTargets, alignToTeeth, refineToTeeth, rigidFromPairs, alignQuality, snapToTarget } from './align.js';
 import { quickSegment } from './segment.js';
 import { autoThresholds } from './stats.js';
 import { detectFace, solvePose, buildAtlas, projectUV, faceBoxFrom, faceBoxFrom3 } from './drape.js';
 import { History } from './history.js';
-import { airwayAuto, heatColors, heatRange, airwayNorm, airwayClassify } from './airway.js';
+import { airwayAuto, heatColors, heatRange, heatColor, airwayNorm, airwayClassify } from './airway.js';
 export { airwayNorm, airwayClassify };
+/** Color del mapa de calor de la vía aérea para t ∈ [0, 1] (leyenda del informe, v0.8.5). */
+export function heatColorAt(t) { return heatColor(Math.max(0, Math.min(1, t))); }
 import { archCurve, curveFrom, buildPanoramic, drawPanoramic } from './panoramic.js';
+import { buildTelerx, rotateImage, rotatePoint, drawTelerx } from './telerx.js';
 import { tmjSampler, refineCondyle, condyleSeries, condyleSlice, samplePlane, polesFrom, planeToWorld, worldToPlane, drawSlice, clampAspect, bestAxialOffset, TMJ_SAG_OFFS } from './tmj.js';
 export { clampAspect, planeToWorld, worldToPlane };
 export { drawSlice as drawTmjSlice, TMJ_SAG_OFFS };
-export { drawPanoramic };
+export { drawPanoramic, drawTelerx, rotateImage as rotateTeleImage };
 
 /** Deshacer / rehacer global (main.js apunta las acciones de la interfaz; aquí las geométricas). */
 export const history = new History(50);
@@ -65,7 +69,7 @@ export const state = {
   cut: { axis: null, frac: 0.5, flip: false },
   measureMode: null,
   mprMeasures: 0,               // contador de mediciones en los MPR (color cíclico)
-  silhouettes: true,            // siluetas de las mallas sobre los cortes MPR
+  silhouettes: false,           // siluetas de las mallas sobre los cortes MPR (apagadas por defecto desde v0.8.3)
   enamel: null,                 // superficie dental del CBCT (caché bruta, align.enamelTargets)
   teeth: null,                  // destinos por arco elegidos (pickTargets; tras el reintento mutuo, la arcada ganadora)
   crosshairs: false,            // cruz de referencia en los MPR (CrosshairsTool)
@@ -97,6 +101,11 @@ export function getMeshes() { return meshes ? meshes.items : []; }
 export function meshSTL(id) {
   const it = (meshes ? meshes.items : []).find((m) => m.id === id);
   return it ? { name: it.name, buf: writeSTL(it, 'tresD DICOM - ' + it.name) } : null;
+}
+/** La malla como PLY binario con su color por vértice (si lo tiene); si no, null (v0.8.4). */
+export function meshPLY(id) {
+  const it = (meshes ? meshes.items : []).find((m) => m.id === id);
+  return it && it.colors ? { name: it.name, buf: writePLY(it, 'tresD DICOM - ' + it.name) } : null;
 }
 
 /** Caja del escenario: volumen ∪ mallas visibles (para el corte y para el rayo de medición). */
@@ -189,6 +198,7 @@ export async function initViewer(els) {
   measure3d.onRemove = (m, index) => history.record({ label: 'measure_del', undo: () => measure3d.addMeasure(m, index), redo: () => measure3d.removeMeasure(m) });
   mprPlanes = new MprPlanes(() => engine.getViewport(VP.v3d), () => state.volume);
   silhouettes = new Silhouettes((id) => engine.getViewport(id), () => meshes.items, () => !!state.volume);
+  silhouettes.setEnabled(state.silhouettes);
   silhouettes.attach({ [VP.ax]: els[VP.ax], [VP.cor]: els[VP.cor], [VP.sag]: els[VP.sag] });
   // curva de la arcada de la panorámica sobre el corte AXIAL (línea discontinua)
   silhouettes.extra.push((id, g, vp, axis) => {
@@ -375,6 +385,38 @@ export function applyThemeBackground() {
 
 function status(msg) { if (state.onStatus) state.onStatus(msg); }
 
+/**
+ * Captura del visor 3D SIN FONDO (PNG con transparencia, v0.8.5): se pinta dos veces, sobre negro y sobre blanco, y
+ * de la diferencia sale la opacidad de cada píxel (alfa = 1 − (blanco − negro)/255) y su color (negro / alfa).
+ * Así el render (también lo translúcido) se puede poner sobre la página clara u oscura del informe.
+ * Devuelve un data-URL PNG (ancho máximo maxW) o null.
+ */
+export async function shot3DAlpha(maxW = 1400) {
+  const vp = state.engine && state.engine.getViewport(VP.v3d); if (!vp) return null;
+  const ren = vp.getRenderer(), canvas = vp.getCanvas(); if (!ren || !canvas || !canvas.width) return null;
+  const bg0 = viewerBg();
+  const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 30))));
+  const grab = async (rgb) => {
+    ren.setBackground(...rgb); vp.render(); await frame();
+    const c = document.createElement('canvas'); c.width = canvas.width; c.height = canvas.height;
+    c.getContext('2d').drawImage(canvas, 0, 0);
+    return c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  };
+  let B, W;
+  try { B = await grab([0, 0, 0]); W = await grab([1, 1, 1]); } finally { ren.setBackground(...bg0); vp.render(); }
+  const w = canvas.width, h = canvas.height;
+  const out = document.createElement('canvas'); out.width = w; out.height = h;
+  const g = out.getContext('2d'), img = g.createImageData(w, h), D = img.data;
+  for (let i = 0; i < D.length; i += 4) {
+    const a = Math.max(0, Math.min(1, 1 - ((W[i] - B[i]) + (W[i + 1] - B[i + 1]) + (W[i + 2] - B[i + 2])) / (3 * 255)));
+    if (a <= 0.004) { D[i + 3] = 0; continue; }
+    D[i] = Math.min(255, B[i] / a); D[i + 1] = Math.min(255, B[i + 1] / a); D[i + 2] = Math.min(255, B[i + 2] / a); D[i + 3] = Math.round(a * 255);
+  }
+  g.putImageData(img, 0, 0);
+  if (w > maxW) { const k = maxW / w; const small = document.createElement('canvas'); small.width = Math.round(w * k); small.height = Math.round(h * k); small.getContext('2d').drawImage(out, 0, 0, small.width, small.height); return small.toDataURL('image/png'); }
+  return out.toDataURL('image/png');
+}
+
 // La ventana (brillo/contraste) que el usuario ajusta arrastrando en un MPR se copia a los otros
 // dos cortes y a los planos MPR del 3D (una sola ventana para todos, como en VOXEL).
 let syncing = false, syncTimer = null;
@@ -518,7 +560,7 @@ async function finishLoad(series, onProgress) {
   measure3d.redraw();                 // mediciones hechas sobre escáneres antes de cargar el CBCT
   for (const id of MPR_IDS) updateInfo(id);
   silhouettes.redrawAll();
-  state.pano = null;
+  state.pano = null; state.tele = null;
   if (state.crosshairs) { applyMprBindings(); resetCrosshairs(); }
   history.clear();                    // cargar el DICOM no se deshace
   return volume;
@@ -690,11 +732,13 @@ export async function removeVolume() {
   }
   try { cache.removeVolumeLoadObject(state.volumeId); } catch (e) { /* nada */ }
   removeRenderVolume(state.renderVolumeId); state.renderVolumeId = null;
+  cloud = null; clearTimeout(cloudTimer);
+  state.orient = { x: 0, y: 0, z: 0 };
   try { cache.purgeCache(); } catch (e) { /* nada */ }
   try { wadouri.fileManager.purge(); } catch (e) { /* nada */ }
   state.volume = null; state.volumeId = null; state.series = null; state.sorted = null; state.enamel = null; state.teeth = null;
   state.cut = { axis: null, frac: 0.5, flip: false };
-  state.pano = null;
+  state.pano = null; state.tele = null;
   if (state.crosshairs) { state.crosshairs = false; try { applyMprBindings(); } catch (e) { /* nada */ } }
   history.clear();
   meshes.setClip(null);
@@ -719,14 +763,152 @@ function volumeActor() {
 export function applyRender() {
   const actor = volumeActor();
   if (!actor) return;
-  applyState(actor, state.render);
-  actor.setVisibility(!!state.render.visible);
+  const grid = state.render.preset === 'grid';
+  if (!grid) applyState(actor, state.render);
+  actor.setVisibility(!!state.render.visible && !grid);
+  // modo REJILLA (v0.8.3): el volumen se esconde y se enseña la nube de puntos (se construye si hace falta)
+  if (grid) { if (!cloud || cloud.thr !== state.render.lo) rebuildCloudSoon(); if (cloud) cloudShow(true); }
+  else if (cloud) cloudShow(false);
   state.engine.getViewport(VP.v3d).render();
 }
 
+// ------------------------------------------------------------------ ORIENTAR EL VOLUMEN (v0.8.6)
+// Endereza la cabeza: gira TODO el caso (volumen, escáneres, segmentaciones, medidas, polos de ATM, vía aérea…)
+// alrededor del centro del volumen. Como los cortes MPR van por los ejes del MUNDO, girar el volumen equivale a
+// colocar al paciente derecho, y todo lo que se calcula a partir de los cortes (panorámica, TeleRx, ATM) sale ya
+// corregido. Los ángulos son ABSOLUTOS en grados sobre la posición original (LPS):
+//   x = inclinación sagital (asentir) · y = inclinación lateral (plano coronal) · z = giro (plano axial)
+// Cada llamada aplica solo la DIFERENCIA con la orientación actual, así que los deslizadores no acumulan error.
+const rad = (d) => (d * Math.PI) / 180;
+function mul3(A, B) { const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]; for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) C[i][j] += A[i][k] * B[k][j]; return C; }
+function mv3(R, v) { return [R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2], R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2], R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2]]; }
+const tr3 = (R) => [[R[0][0], R[1][0], R[2][0]], [R[0][1], R[1][1], R[2][1]], [R[0][2], R[1][2], R[2][2]]];
+function eulerLPS(d) {
+  const cx = Math.cos(rad(d.x)), sx = Math.sin(rad(d.x)), cy = Math.cos(rad(d.y)), sy = Math.sin(rad(d.y)), cz = Math.cos(rad(d.z)), sz = Math.sin(rad(d.z));
+  const Rx = [[1, 0, 0], [0, cx, -sx], [0, sx, cx]];     // eje X (izquierda del paciente): asentir
+  const Ry = [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]];     // eje Y (posterior): inclinar la cabeza a un lado
+  const Rz = [[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]];     // eje Z (superior): girar
+  return mul3(Rz, mul3(Ry, Rx));
+}
+/** Centro del volumen en coordenadas del mundo. */
+function volumeCenter() {
+  const img = state.volume.imageData, d = img.getDimensions();
+  return img.indexToWorld([(d[0] - 1) / 2, (d[1] - 1) / 2, (d[2] - 1) / 2], [0, 0, 0]);
+}
+/** Gira un volumen de Cornerstone (dirección + origen) alrededor de `c`. */
+function rotateVolume(vol, R, c) {
+  if (!vol || !vol.imageData) return;
+  const img = vol.imageData;
+  const d = Array.from(img.getDirection());
+  const ax = [d.slice(0, 3), d.slice(3, 6), d.slice(6, 9)].map((v) => mv3(R, v));   // filas de la matriz = ejes i, j, k
+  const o = Array.from(img.getOrigin());
+  const no = mv3(R, [o[0] - c[0], o[1] - c[1], o[2] - c[2]]).map((x, q) => x + c[q]);
+  const flat = [...ax[0], ...ax[1], ...ax[2]];
+  img.setDirection(...flat); img.setOrigin(...no); img.modified();
+  try { if (vol.direction && vol.direction.length >= 9) for (let q = 0; q < 9; q++) vol.direction[q] = flat[q]; } catch (e) { /* nada */ }
+  try { vol.origin = no; } catch (e) { /* nada */ }
+}
+/** Orientación actual (grados) o null sin CBCT. */
+export function getOrient() { return state.volume ? { ...(state.orient || { x: 0, y: 0, z: 0 }) } : null; }
+/**
+ * Coloca la orientación ABSOLUTA del caso.
+ *   opts.volumeOnly = solo el volumen (al restaurar una sesión: las mallas y las medidas ya vienen giradas).
+ *   opts.live       = mientras se arrastra el deslizador: gira todo (volumen, mallas, medidas) pero NO rehace lo
+ *                     caro (rejilla y siluetas), que se deja para cuando se suelta.
+ * Devuelve lo que la interfaz debe rehacer: { panoControl, panoZ, tmj } (null si no hay nada).
+ */
+export function setOrient(deg, opts = {}) {
+  if (!state.volume) return null;
+  const cur = state.orient || { x: 0, y: 0, z: 0 };
+  const next = { x: +deg.x || 0, y: +deg.y || 0, z: +deg.z || 0 };
+  const R = mul3(eulerLPS(next), tr3(eulerLPS(cur)));
+  const same = Math.abs(R[0][0] - 1) < 1e-12 && Math.abs(R[1][1] - 1) < 1e-12 && Math.abs(R[2][2] - 1) < 1e-12;
+  state.orient = next;
+  if (same) return null;
+  const c = volumeCenter();
+  rotateVolume(state.volume, R, c);
+  const rv = state.renderVolumeId && cache.getVolume(state.renderVolumeId);
+  if (rv) rotateVolume(rv, R, c);
+  // los cortes MPR y el render miran el volumen ya girado: lo derivado del volumen se vuelve a calcular
+  state.enamel = null; state.teeth = null;          // superficie dental (alineación): se re-detecta sobre el volumen derecho
+  state.tele = null;                                // telerradiografía: se recalcula al abrirla
+  if (!opts.live) { cloud = null; clearTimeout(cloudTimer); }   // la rejilla se rehace al SOLTAR (cuesta segundos)
+  let out = null;
+  if (!opts.volumeOnly) {
+    const rc = mv3(R, c);
+    const M = [R[0][0], R[0][1], R[0][2], c[0] - rc[0], R[1][0], R[1][1], R[1][2], c[1] - rc[1], R[2][0], R[2][1], R[2][2], c[2] - rc[2], 0, 0, 0, 1];
+    const rp = (p) => { const q = mv3(R, [p[0] - c[0], p[1] - c[1], p[2] - c[2]]); return [q[0] + c[0], q[1] + c[1], q[2] + c[2]]; };
+    for (const it of meshes.items.slice()) meshes.rotate(it.id, M);          // escáneres, cráneo, piel y vía aérea
+    if (measure3d) { const ms = getMeasures3D().map((m) => ({ ...m, pts: m.pts.map(rp), labelpos: rp(m.labelpos) })); setMeasures3D(ms); }
+    try {   // medidas de los cortes (anotaciones de Cornerstone): sus puntos van en el mundo
+      for (const a of csTools.annotation.state.getAllAnnotations()) {
+        const h = a && a.data && a.data.handles;
+        if (h && Array.isArray(h.points)) h.points = h.points.map(rp);
+        if (h && h.textBox && h.textBox.worldPosition) h.textBox.worldPosition = rp(h.textBox.worldPosition);
+      }
+    } catch (e) { /* nada */ }
+    const aw = meshes.items.find((m) => m.role === 'airway');
+    if (aw && aw.airway) { if (aw.airway.sup) aw.airway.sup = rp(aw.airway.sup); if (aw.airway.inf) aw.airway.inf = rp(aw.airway.inf); }
+    const soft = softMesh();      // la foto drapeada sigue pegada a la piel (las UV no cambian); la pose sí se gira
+    if (soft && soft.drape && soft.drape.pose && soft.drape.pose.R) {
+      const P = soft.drape.pose, Rp = [[P.R[0], P.R[1], P.R[2]], [P.R[3], P.R[4], P.R[5]], [P.R[6], P.R[7], P.R[8]]];
+      const Rn = mul3(Rp, tr3(R)), t = P.t.slice();
+      const d = mv3(Rp, mv3(tr3(R), mv3(R, c).map((x, q) => x - c[q])));
+      P.R = [Rn[0][0], Rn[0][1], Rn[0][2], Rn[1][0], Rn[1][1], Rn[1][2], Rn[2][0], Rn[2][1], Rn[2][2]];
+      P.t = [t[0] - d[0], t[1] - d[1], t[2] - d[2]];
+    }
+    if (state.tmj && state.tmj.poles) for (const sd of ['R', 'L']) { const p = state.tmj.poles[sd]; if (p) { p.med = rp(p.med); p.lat = rp(p.lat); } }
+    const ctrl = getPanoControl();
+    out = { panoControl: ctrl ? ctrl.map(rp) : null, tmj: !!(state.tmj && state.tmj.poles) };
+    if (out.panoControl) out.panoZ = out.panoControl.reduce((a, p) => a + p[2], 0) / out.panoControl.length;
+  }
+  if (!opts.live) { try { silhouettes.redrawAll(); } catch (e) { /* nada */ } }
+  applyRender();
+  for (const id of Object.values(VP)) { try { const vp = state.engine.getViewport(id); if (vp && vp.render) vp.render(); } catch (e) { /* nada */ } }
+  return out;
+}
+
+// ------------------------------------------------------------------ render «Rejilla» (nube de puntos, v0.8.3)
+let cloud = null, cloudTimer = 0;
+const CLOUD_UID = 'tresd-cloud', WIRE_UID = 'tresd-wire';
+function rebuildCloudSoon() { clearTimeout(cloudTimer); cloudTimer = setTimeout(rebuildCloud, cloud ? 250 : 0); }
+/** Visibilidad y opacidad de los puntos y del alambre (v0.8.4) según el estado del render. */
+function cloudShow(on) {
+  if (!cloud) return;
+  const vis = on && !!state.render.visible, op = Math.max(0.05, state.render.opacity ?? 1);
+  cloud.actor.setVisibility(vis); cloud.actor.getProperty().setOpacity(op);
+  if (cloud.wire) { cloud.wire.setVisibility(vis); cloud.wire.getProperty().setOpacity(0.22 * op); }
+}
+function rebuildCloud() {
+  if (!state.volume || state.render.preset !== 'grid') return;
+  const vp = state.engine.getViewport(VP.v3d);
+  const vol = (state.renderVolumeId && cache.getVolume(state.renderVolumeId)) || state.volume;
+  let data = null;
+  try { data = vol.voxelManager ? (vol.voxelManager.scalarData || vol.voxelManager.getCompleteScalarDataArray()) : null; } catch (e) { data = null; }
+  if (!data) return;
+  const img = vol.imageData, dims = img.getDimensions();
+  const o = img.indexToWorld([0, 0, 0], [0, 0, 0]);
+  const e = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((v) => { const w = img.indexToWorld(v, [0, 0, 0]); return [w[0] - o[0], w[1] - o[1], w[2] - o[2]]; });
+  const thr = state.render.lo, hi = Math.max(state.render.hi, thr + 200);
+  if (cloud) { try { vp.removeActors([CLOUD_UID, WIRE_UID]); } catch (err) { /* nada */ } cloud = null; }
+  const res = buildPointCloud(data, dims, o, e, thr, hi);
+  if (!res) { vp.render(); return; }
+  // v0.8.4: superficie en alambre (triángulos sutiles) bajo los puntos, al mismo paso
+  let wire = null;
+  try { wire = buildWireframe(data, dims, o, e, thr, Math.max(4, 2 * res.stride)); } catch (err) { console.warn('alambre', err); wire = null; }
+  cloud = { actor: res.actor, wire: wire ? wire.actor : null, tris: wire ? wire.tris : 0, n: res.n, stride: res.stride, thr };
+  try { if (wire) vp.addActor({ uid: WIRE_UID, actor: wire.actor }); vp.addActor({ uid: CLOUD_UID, actor: res.actor }); } catch (err) { console.warn('nube de puntos', err); }
+  cloudShow(true);
+  vp.render();
+  if (state.onStatus) state.onStatus(`Rejilla: ${res.n.toLocaleString()} puntos y ${cloud.tris.toLocaleString()} triángulos de hueso (≥ ${Math.round(thr)} HU${res.stride > 1 ? `, 1 de cada ${res.stride} vóxeles` : ''})`);
+}
+/** Estado de la nube de puntos (pruebas): { n, stride, visible } o null. */
+export function cloudInfo() { return cloud ? { n: cloud.n, tris: cloud.tris, stride: cloud.stride, visible: cloud.actor.getVisibility(), wireVisible: !!(cloud.wire && cloud.wire.getVisibility()) } : null; }
+
 export function setPreset(preset) {
   state.render.preset = preset;
-  if (state.sorted) { const [lo, hi] = windowFor(state.sorted, preset); state.render.lo = lo; state.render.hi = hi; }
+  if (state.sorted && preset === 'grid') { const th = autoThresholds(state.sorted); state.render.lo = th.bone; state.render.hi = th.bone + 1500; }   // rejilla: solo hueso
+  else if (state.sorted) { const [lo, hi] = windowFor(state.sorted, preset); state.render.lo = lo; state.render.hi = hi; }
   applyRender();
   return { level: (state.render.lo + state.render.hi) / 2, window: state.render.hi - state.render.lo };
 }
@@ -770,6 +952,34 @@ export function reset3D() {
     // se repasa en el siguiente fotograma (si no, el modelo entra ya cortado al alinear por puntos)
     requestAnimationFrame(() => fixClipRange());
   } catch (e) { /* nada */ }
+}
+
+/** Acerca (f > 1) o aleja el visor 3D sin mover el centro; recalcula los planos de recorte. */
+export function zoom3D(f) {
+  try { const vp = state.engine.getViewport(VP.v3d); vp.setZoom(vp.getZoom() * f); fixClipRange(); vp.render(); } catch (e) { /* nada */ }
+}
+/**
+ * Encuadra el visor 3D sobre la DENTICIÓN del CBCT (alineación por puntos, fase del CBCT, v0.8.3): centro y radio
+ * de la superficie dental ya detectada (`state.teeth.all`); si aún no se ha buscado, no hace nada y devuelve false.
+ */
+export function focusTeeth3D(margin = 1.1) {
+  const tg = state.teeth && state.teeth.all;
+  if (!tg || !tg.n || !state.engine) return false;
+  const c = tg.center, P = tg.pts;
+  // radio ROBUSTO (percentil 95 de las distancias al centro): unos pocos puntos sueltos (raíces, hueso pegado)
+  // no deben alejar la cámara; y nunca más de 45 mm (media altura del visor), que ya cabe una dentición entera
+  const d = new Float32Array(P.length / 3);
+  for (let i = 0, q = 0; i < P.length; i += 3, q++) d[q] = Math.hypot(P[i] - c[0], P[i + 1] - c[1], P[i + 2] - c[2]);
+  d.sort();
+  const r = Math.max(15, Math.min(45, d[Math.floor(0.95 * (d.length - 1))] * margin));
+  try {
+    const vp = state.engine.getViewport(VP.v3d);
+    const cam = vp.getCamera();
+    const d = [cam.position[0] - cam.focalPoint[0], cam.position[1] - cam.focalPoint[1], cam.position[2] - cam.focalPoint[2]];
+    vp.setCamera({ focalPoint: c.slice(), position: [c[0] + d[0], c[1] + d[1], c[2] + d[2]], parallelScale: r });
+    fixClipRange(); vp.render();
+    return true;
+  } catch (e) { return false; }
 }
 
 export function centerAll() {
@@ -1054,6 +1264,7 @@ export async function drapePhoto(image, opts = {}) {
   const { uv, painted } = projectUV(soft.pts, meshes.normals(soft.id), pose, W, H, atlas);
   const prev = drapeSnapshot(soft);
   meshes.setTexture(soft.id, atlas.canvas, uv);
+  soft.drapeAtlas = { ...atlas, W, H };                 // para guardar la foto en la sesión / el paquete (v0.8.4)
   soft.drape = { ok: true, err: pose.err, n: pose.n, inliers: pose.inliers, painted, manual: !!opts.pairs, pose };
   const next = drapeSnapshot(soft);
   history.record({ label: 'photo', undo: () => restoreDrape(soft.id, prev), redo: () => restoreDrape(soft.id, next) });
@@ -1061,13 +1272,51 @@ export async function drapePhoto(image, opts = {}) {
   return soft.drape;
 }
 
-function drapeSnapshot(s) { return s.drape ? { canvas: s.textureCanvas, uv: s.uv, drape: s.drape } : null; }
+function drapeSnapshot(s) { return s.drape ? { canvas: s.textureCanvas, uv: s.uv, drape: s.drape, atlas: s.drapeAtlas } : null; }
 function restoreDrape(id, snap) {
   const s = meshes.get(id); if (!s) return;
-  if (snap) { meshes.setTexture(id, snap.canvas, snap.uv); s.drape = snap.drape; }
-  else { meshes.clearTexture(id); s.drape = null; s.textureCanvas = null; s.uv = null; }
+  if (snap) { meshes.setTexture(id, snap.canvas, snap.uv); s.drape = snap.drape; s.drapeAtlas = snap.atlas || null; }
+  else { meshes.clearTexture(id); s.drape = null; s.textureCanvas = null; s.uv = null; s.drapeAtlas = null; }
   try { state.engine.getViewport(VP.v3d).render(); } catch (e) { /* nada */ }
   if (state.onMeshesChanged) state.onMeshesChanged();
+}
+
+/**
+ * Foto drapeada para la sesión / el paquete (v0.8.4): el ATLAS (recorte de la cara con margen color piel) como
+ * JPEG en data-URL, la pose de la cámara y la geometría del atlas. Con eso se vuelve a proyectar sobre CUALQUIER
+ * piel segmentada del mismo CBCT (también a resolución reducida), sin detección facial ni foto original.
+ */
+export function drapeExport() {
+  const s = softMesh(); if (!s || !s.drape || !s.textureCanvas || !s.drape.pose) return null;
+  const a = s.drapeAtlas || null;
+  if (!a) return null;
+  return { image: s.textureCanvas.toDataURL('image/jpeg', 0.9), pose: s.drape.pose, atlas: { pad: a.pad, box: a.box, skin: a.skin }, W: a.W, H: a.H, manual: !!s.drape.manual };
+}
+/** Vuelve a drapear la piel con los datos de `drapeExport`. Devuelve el drape o null. */
+export function drapeImport(data) {
+  return new Promise((resolve) => {
+    const soft = softMesh();
+    if (!soft || !data || !data.image || !data.pose || !data.atlas) { resolve(null); return; }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        const atlas = { canvas: c, pad: data.atlas.pad, box: data.atlas.box, skin: data.atlas.skin, W: data.W, H: data.H };
+        const { uv, painted } = projectUV(soft.pts, meshes.normals(soft.id), data.pose, data.W, data.H, atlas);
+        const prev = drapeSnapshot(soft);
+        meshes.setTexture(soft.id, c, uv);
+        soft.drapeAtlas = atlas;
+        soft.drape = { ok: true, err: data.pose.err, n: data.pose.n, inliers: data.pose.inliers, painted, manual: !!data.manual, pose: data.pose, restored: true };
+        const next = drapeSnapshot(soft);
+        history.record({ label: 'photo', undo: () => restoreDrape(soft.id, prev), redo: () => restoreDrape(soft.id, next) });
+        state.engine.getViewport(VP.v3d).render();
+        resolve(soft.drape);
+      } catch (e) { console.warn('drapeImport', e); resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = data.image;
+  });
 }
 
 export function setDrapeVisible(on) { const s = softMesh(); if (s) { meshes.setTextureVisible(s.id, on); state.engine.getViewport(VP.v3d).render(); } }
@@ -1281,6 +1530,17 @@ function applyMprBindings() {
   for (const id of MPR_IDS) { try { state.engine.getViewport(id).render(); } catch (e) { /* nada */ } }
 }
 
+/**
+ * Quita la cruz el tiempo justo de una captura (informe, v0.8.0) y la vuelve a poner sin mover los cortes:
+ * al reactivarla Cornerstone la recoloca en el cruce de los cortes actuales.
+ */
+export function suspendCrosshairs(off) {
+  if (!state.crosshairs || !state.volume) return;
+  try {
+    if (off) { csTools.ToolGroupManager.getToolGroup(TG_MPR).setToolDisabled(csTools.CrosshairsTool.toolName); for (const id of MPR_IDS) state.engine.getViewport(id).render(); }
+    else applyMprBindings();
+  } catch (e) { /* nada */ }
+}
 /** Cruz de referencia en los cortes MPR (CrosshairsTool): activar / desactivar. */
 export function setCrosshairs(on) {
   state.crosshairs = !!on && !!state.volume;
@@ -1515,6 +1775,85 @@ export function getCondylePoles(side) {
   return p ? { med: p.med.slice(), lat: p.lat.slice() } : null;
 }
 
+// ------------------------------------------------------------------ SESIÓN (.tresd, v0.8.0): estado del núcleo
+/** Medidas del 3D (puntos en mm) tal cual, para guardarlas. */
+export function getMeasures3D() {
+  return measure3d ? measure3d.measures.map((m) => ({ type: m.type, pts: m.pts.map((p) => p.slice()), color: m.color, label: m.label, labelpos: m.labelpos.slice(), offset: (m.offset || [0, -16]).slice() })) : [];
+}
+export function setMeasures3D(list) {
+  if (!measure3d) return;
+  measure3d.attach(elements[VP.v3d]);
+  measure3d.setMeasures((list || []).map((m) => ({ ...m, pts: m.pts.map((p) => p.slice()) })));
+}
+/** Anotaciones de distancia / ángulo de los cortes MPR (objetos de Cornerstone, serializables) con su color y visor. */
+export function getMprAnnotations() {
+  try {
+    return csTools.annotation.state.getAllAnnotations()
+      .filter((a) => a.metadata && (a.metadata.toolName === csTools.LengthTool.toolName || a.metadata.toolName === csTools.AngleTool.toolName))
+      .map((a) => ({ a: JSON.parse(JSON.stringify(a)), color: ((csTools.annotation.config.style.getAnnotationToolStyles(a.annotationUID) || {}).color) || null, vp: viewportOfAnnotation(a) }));
+  } catch (e) { return []; }
+}
+export function setMprAnnotations(list) {
+  let n = 0;
+  for (const it of list || []) {
+    try {
+      const col = it.color || MEAS_COLORS[n % MEAS_COLORS.length];
+      csTools.annotation.config.style.setAnnotationStyles(it.a.annotationUID, { color: col, colorHighlighted: col, colorSelected: col, colorLocked: col, textBoxColor: col, textBoxColorHighlighted: col, textBoxColorSelected: col, textBoxColorLocked: col });
+      if (!csTools.annotation.state.getAnnotation(it.a.annotationUID)) csTools.annotation.state.addAnnotation(it.a, elements[it.vp] || elements[VP.ax]);
+      n++;
+    } catch (e) { console.warn('anotación de la sesión', e); }
+  }
+  state.mprMeasures = n;
+  try { state.engine.render(); } catch (e) { /* nada */ }
+}
+/** Valores de las medidas de los MPR (mm o °), para el informe. */
+export function getMprMeasureValues() {
+  const out = [];
+  try {
+    for (const a of csTools.annotation.state.getAllAnnotations()) {
+      const tn = a.metadata && a.metadata.toolName;
+      if (tn !== csTools.LengthTool.toolName && tn !== csTools.AngleTool.toolName) continue;
+      const st = a.data && a.data.cachedStats ? Object.values(a.data.cachedStats)[0] : null;
+      const color = ((csTools.annotation.config.style.getAnnotationToolStyles(a.annotationUID) || {}).color) || null;
+      const vp = viewportOfAnnotation(a);
+      if (tn === csTools.LengthTool.toolName) out.push({ where: vp, type: 'linear', value: st && Number.isFinite(st.length) ? st.length.toFixed(1) + ' mm' : '—', color });
+      else out.push({ where: vp, type: 'angle', value: st && Number.isFinite(st.angle) ? st.angle.toFixed(1) + '°' : '—', color });
+    }
+  } catch (e) { /* nada */ }
+  return out;
+}
+/** Coloca una malla recién importada (sin orientar) con la matriz guardada en una sesión. */
+export function applyMeshMatrix(id, M, align) {
+  const it = meshes.get(id); if (!it || !M || M.length !== 16) return;
+  meshes.transform(id, M);
+  it.M = M.slice(); it.oriented = true; if (align) it.align = align;
+  afterMeshChange();
+}
+/** Rehace los cortes de ATM a partir de los POLOS guardados (sin volver a marcar los cóndilos). */
+export function restoreTmj(saved, aspect) {
+  if (!state.volume || !state.sorted || !saved || !saved.poles) return null;
+  const thr = autoThresholds(state.sorted).bone;
+  const smp = tmjSampler(state.volume, sliceGetter());
+  const bnds = state.volume.imageData.getBounds();
+  const midX = Number.isFinite(saved.midX) ? saved.midX : (bnds[0] + bnds[1]) / 2;
+  const a = clampAspect(aspect || saved.aspect);
+  const step = Math.min(0.14, Math.max(0.07, Math.min(...state.volume.spacing) / 3));
+  const poles = {}, series = {}, shift = { R: { sag: 0, cor: 0, axi: 0 }, L: { sag: 0, cor: 0, axi: 0 } };
+  for (const sd of ['R', 'L']) {
+    const p = saved.poles[sd]; if (!p || !p.med || !p.lat) continue;
+    const pole = polesFrom(p.med, p.lat, 0, null, midX);
+    pole.side = sd; pole.step = step; pole.axiBase = bestAxialOffset(smp, pole, thr);
+    poles[sd] = pole;
+    shift[sd] = { sag: 0, cor: 0, axi: 0, ...((saved.shift || {})[sd] || {}) };
+    series[sd] = condyleSeries(smp, pole, step, shift[sd], a);
+  }
+  if (!Object.keys(series).length) return null;
+  state.tmj = { poles, series, win: saved.win ? { ...saved.win } : { ...state.mprWindow }, thr, smp, midX, aspect: a, shift, meas: saved.meas ? JSON.parse(JSON.stringify(saved.meas)) : {} };
+  state.tmjMarks = null;
+  silhouettes.redrawAll();
+  return state.tmj;
+}
+
 /**
  * Ajusta la PROPORCIÓN de los cortes de ATM a la de las casillas del mosaico (así llenan la casilla y no
  * quedan franjas negras). Devuelve true si hubo que rehacerlos. Borra las medidas, que iban en píxeles.
@@ -1644,6 +1983,54 @@ export function setPanoControl(ctrl) {
 }
 /** Curva de la panorámica a partir de puntos DIBUJADOS por el usuario (mundo, en un corte axial a la altura z). */
 export function curveFromPoints(pts, z) { return curveFrom(pts.map((q) => [q[0], q[1]]), z); }
+
+// ------------------------------------------------------------------ TELERRADIOGRAFÍA simulada (v0.8.1)
+// state.tele = { view, mode, tilt, cache: { lat: {ray, mip}, pa: {…} }, image (la que se ve, ya girada),
+//                win: { ray, mip }, meas: { lat: [], pa: [] } }. Las medidas van en píxeles de la imagen que se
+// ve (girada); al cambiar la inclinación se giran con ella.
+/** Calcula (o recupera de la caché) la telerx pedida. opts = { view, mode, tilt }. onProgress(0…1). */
+export async function buildTele(opts = {}, onProgress) {
+  if (!state.volume) return null;
+  const tele = state.tele || (state.tele = { view: 'lat', mode: 'ray', tilt: 0, cache: {}, image: null, win: {}, meas: { lat: [], pa: [] } });
+  const view = opts.view || tele.view, mode = opts.mode || tele.mode;
+  if (!tele.cache[view]) {
+    // nivel del AIRE: percentil bajo del volumen (si viene en HU con relleno −3024 fuera del campo, se queda en −1000)
+    const srt = state.sorted; let air = -1000;
+    if (srt && srt.length) air = Math.max(-1000, srt[Math.floor(0.15 * (srt.length - 1))]);
+    const th = autoThresholds(srt);
+    const mipLo = th.soft + 0.75 * (th.bone - th.soft);             // ≈ 150 HU en un CBCT normal
+    tele.cache[view] = await buildTelerx(state.volume, sliceGetter(), { view, air, mipLo }, onProgress);
+  }
+  tele.view = view; tele.mode = mode;
+  if (Number.isFinite(opts.tilt)) tele.tilt = opts.tilt;
+  const base = tele.cache[view][mode];
+  tele.image = tele.tilt ? rotateImage(base, tele.tilt) : base;
+  if (!tele.win[mode]) tele.win[mode] = { lower: 0, upper: 1000 };
+  return tele;
+}
+/** Cambia la inclinación (grados, + = antihorario) girando la imagen y sus medidas sobre el centro. */
+export function setTeleTilt(deg) {
+  const tele = state.tele; if (!tele || !tele.image) return null;
+  const d = deg - tele.tilt;
+  if (!d) return tele;
+  const base = tele.cache[tele.view][tele.mode];
+  const list = tele.meas[tele.view] || [];
+  for (const m of list) for (const k of ['a', 'v', 'b']) if (m[k]) m[k] = rotatePoint(m[k], base, d);
+  tele.tilt = deg;
+  tele.image = deg ? rotateImage(base, deg) : base;
+  return tele;
+}
+export function getTeleWindow() { const t = state.tele; return t && t.win[t.mode] ? { ...t.win[t.mode] } : { lower: 0, upper: 1000 }; }
+export function setTeleWindow(win) { const t = state.tele; if (t) t.win[t.mode] = { lower: win.lower, upper: win.upper }; }
+export function getTeleWindows() { const t = state.tele; return t ? JSON.parse(JSON.stringify(t.win)) : {}; }
+export function setTeleWindows(w) { const t = state.tele; if (t && w) for (const k of ['ray', 'mip']) if (w[k]) t.win[k] = { lower: w[k].lower, upper: w[k].upper }; }
+/** Medidas de la vista actual (píxeles de la imagen). */
+export function getTeleMeas() { const t = state.tele; return t ? (t.meas[t.view] || (t.meas[t.view] = [])) : []; }
+export function addTeleMeas(m) { const t = state.tele; if (t) getTeleMeas().push(m); return m; }
+export function setTeleMeas(list) { const t = state.tele; if (t) t.meas[t.view] = list || []; }
+export function clearTeleMeas() { const t = state.tele; if (t) t.meas[t.view] = []; }
+export function getAllTeleMeas() { const t = state.tele; return t ? JSON.parse(JSON.stringify(t.meas)) : {}; }
+export function setAllTeleMeas(m) { const t = state.tele; if (t && m) for (const v of ['lat', 'pa']) if (Array.isArray(m[v])) t.meas[v] = m[v]; }
 /** Puntos que el usuario va marcando para dibujar la curva (se pintan sobre el axial); null los quita. */
 export function setPanoDrawPoints(pts) { state.panDraw = pts && pts.length ? pts : null; silhouettes.redrawAll(); }
 
@@ -1697,6 +2084,17 @@ export function jumpViewportSticky(vpId, axis, value, ms = 900) {
   tick();
 }
 
+/** Volumen, lector de cortes y serie para exportar el caso (.tresdz, v0.8.3). */
+export function exportSource() { return state.volume ? { volume: state.volume, getSlice: sliceGetter(), series: state.series } : null; }
+/** Salta a un corte por su índice (deslizadores de corte, v0.8.2). */
+export function setSliceIndex(vpId, i) {
+  if (!state.volume || !elements[vpId]) return;
+  try { csUtils.jumpToSlice(elements[vpId], { imageIndex: Math.max(0, Math.round(i)) }); } catch (e) { /* nada */ }
+}
+/** Normal del plano de vista de un visor MPR (el índice de corte crece en ese sentido), o null. */
+export function viewPlaneNormal(vpId) {
+  try { const vp = state.engine.getViewport(vpId); const n = vp.getCamera().viewPlaneNormal; return n ? n.slice() : null; } catch (e) { return null; }
+}
 /** Lleva el corte AXIAL a una altura concreta (mm, marco del paciente). Sin z, no hace nada. */
 export function jumpAxialToZ(z) { jumpViewportTo(VP.ax, 2, z); }
 

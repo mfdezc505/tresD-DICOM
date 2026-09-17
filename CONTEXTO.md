@@ -419,6 +419,9 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   MEDIO del tramo visible de cada media línea, así que se separa del centro según dónde esté la cruz; no es
   configurable sin reescribir `renderAnnotation` del tool (se descartó). El modo `minimal` sí los deja
   simétricos pero DESACTIVA el giro (`viewportDraggableRotatable = !minimal.enabled`), así que no se usa.
+- **`vtkPoints.modified()` NO invalida los límites cacheados**: tras cambiar `pts` en el sitio hay que llamar a
+  `getPoints().dataChange()`; si no, `getBounds()` devuelve la caja vieja y todo lo que dependa de ella (planos de
+  recorte, encuadres) falla de forma silenciosa (v0.8.2, modelo cortado al alinear por puntos).
 - **Modelo cortado al hacer zoom** (alinear por puntos): eran los planos de recorte de la cámara del visor 3D.
   `viewer.fixClipRange()` recalcula cerca/lejos con los límites de lo VISIBLE (± 2 veces el radio de la escena)
   tras cada cambio de cámara Y tras cada pintado (`resetCamera` y el alta de actores de Cornerstone vuelven a
@@ -811,7 +814,295 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
 - Pruebas: `tests/v0718.mjs` (marca por la interfaz → diálogo abierto; Cancelar conserva la propuesta;
   captura con la medida y el logotipo, comprobando los píxeles) y `v071` adaptada (cierra el diálogo).
 
+## 2ac. v0.8.0 (16-09-2026) — INFORME imprimible (PDF) y SESIÓN .tresd
+- Manuel pidió 10 ideas de mejora «sin hacer cambios» y eligió la 1 (informe) y la 2 (guardar / abrir sesión).
+- **Informe** (`src/ui/report.js` + bloque INFORME de `main.js`): `openReportDialog()` (modal `.modal.report`
+  con casillas `#rp-pat/#rp-3d/#rp-mpr/#rp-pano/#rp-atm/#rp-meas`, deshabilitadas si no hay esa vista, y
+  `#rp-notes`) → `generateReport(opts)`: pasa al 2×2 el tiempo justo (`settle(900)`), captura cada visor con
+  `shotDomAsync(vp, false)` (compone canvas + **capas SVG de Cornerstone**, donde van las medidas MPR; la cruz
+  se quita con `V.suspendCrosshairs(true/false)`, que la reactiva sin mover los cortes), panorámica a 1600 px
+  (`panoFigureUrl`) y mosaico de ATM fuera de pantalla (`atmFigureUrl`), tabla de medidas
+  (`reportMeasures()`: 3D, MPR (`V.getMprMeasureValues`), panorámica, ATM con «ATM derecha · Sagital centro»,
+  y aparte ejes del cóndilo y vía aérea), datos del paciente (omitibles) y del estudio, observaciones.
+  `buildReportHtml(data)` da una página autocontenida (imágenes en data-URL, Poppins por URL absoluta, `@page A4`,
+  aviso legal + versión en el pie) que se abre con `openReport()` en una pestaña (blob) y lanza `window.print()`
+  a los 500 ms: «Guardar como PDF» del navegador (sin librería PDF). Si el navegador bloquea la pestaña, se
+  descarga el HTML. Sin `pdf-lib`/`jsPDF` a propósito: el PDF del navegador es vectorial y pesa poco.
+- **Sesión .tresd** (JSON `{ app:'tresD DICOM', format:1, version, series, patient, chipHidden, layout, render,
+  mprWindow, cut, silhouettes, showArch, measures:{v3d, mpr}, pano:{control, z, thickness, mip, win, meas},
+  tmj:{poles, shift, meas, win, aspect, midX}, airway:{sup, inf, …}, seg, meshes:[{name, role, M, align, …}] }`):
+  `buildSession()/saveSession()` (descarga `tresD_<paciente>_<fecha>.tresd`), `loadSessionFile(file)` (si no hay
+  CBCT → `pendingSession`, se aplica en `openSeries` a los 300 ms), `applySession(d)` (paciente, chip, render,
+  ventana, siluetas, medidas 3D (`V.setMeasures3D`) y MPR (`V.setMprAnnotations`: re-añade las anotaciones de
+  Cornerstone serializadas con su color y visor), segmentación (`runSegmentation`), vía aérea
+  (`V.segmentAirway(sup, inf)`), panorámica (`V.curveFromPoints` + `V.buildPano({curve, thickness, mip})`), ATM
+  (`V.restoreTmj(saved, aspect)`: rehace los cortes desde los POLOS guardados sin volver a marcar; con
+  `saved.aspect` para que las medidas en píxeles sigan valiendo), disposición). Los escáneres no van dentro:
+  quedan en `pendingMeshes[nombre]` y `ingestMeshes` los reconoce por nombre (sin extensión) → `addMesh` con
+  `autoOrient:false` + `V.applyMeshMatrix(id, M, align)` (M = escáner crudo → mundo, se compone en `meshes.transform`),
+  sin diálogo ni alineación. `.tresd` también por arrastre (`isSessionName` en `ingest`). Cabecera:
+  `#btn-open` (siempre), `#btn-save` y `#btn-report` (con caso), `<input id="in-session">`.
+- No se guardan: la foto drapeada (habría que meter la imagen), la posición de cámara del 3D ni los cortes
+  actuales de los MPR (Cornerstone los reencuadra al cargar).
+- Pruebas: `tests/v080.mjs` (~7 min): caso con de todo → guardar (JSON comprobado) → informe (pestaña nueva:
+  `ctx.waitForEvent('page')`, `window.print` sustituido en `ctx.addInitScript`, 6 figuras, 4 medidas, ejes,
+  observaciones, pie) → informe sin paciente → visor nuevo + CBCT + sesión (todo restaurado; escáner reimportado
+  con la MISMA matriz) → sesión antes del CBCT (pendiente) → arrastrar el .tresd. `v0716` acepta cualquier versión.
+
+## 2ad. v0.8.1 (16-09-2026) — TELERRADIOGRAFÍA simulada (lateral / frontal, radiografía / MIP)
+- Manuel preguntó si se puede sacar una telerx «en MIP y normal» del CBCT y pidió una prueba antes: se hizo en
+  Python sobre DZ-CBCT (3,3 s las cuatro imágenes) y le gustó («me encanta, impleméntalo»).
+- **Núcleo** `src/core/telerx.js`: `buildTelerx(volume, getSlice, { view, air, mipLo }, onProgress)` → `{ ray, mip }`
+  en UNA pasada por el volumen (suma de `max(0, v − aire)` y máximo por rayo, acumulados con tablas de
+  desplazamiento por eje: ~0,3 s para 334×334×217; cede el hilo cada 16 cortes para pintar el «%»). Ejes:
+  `axisFrame(img)` saca el eje de índice dominante y su signo para X (izquierda), Y (posterior) y Z (superior) con
+  `indexToWorld`; lateral = rayos por X, columnas hacia ANTERIOR (cara a la derecha); frontal (PA) = rayos por Y,
+  columnas hacia la IZQUIERDA del paciente (se le mira de frente); filas hacia inferior. Radiografía: `normalize`
+  (percentiles 3–99,7, gamma 1,6) + `unsharp` (caja de 1,5 mm, 60 %); MIP: negro por debajo de `mipLo`
+  (= soft + 0,75·(bone − soft) de `autoThresholds`, ≈ 150 HU) y percentil 99,8 blanco. Ambas en 0…1000 con
+  ventana por defecto 0–1000 (así el arrastre de brillo/contraste usa los mismos ×4 por píxel que la panorámica).
+  `squareRows` si el vóxel no es cuadrado. `rotateImage(img, deg)` (bilineal, mismo tamaño; + = antihorario) y
+  `rotatePoint` para las medidas: girar el volumen sobre el eje del rayo ≡ girar la proyección en 2D.
+- **Núcleo** `viewer.js` bloque TELERRADIOGRAFÍA: `state.tele = { view, mode, tilt, cache: { lat, pa }, image, win: { ray, mip },
+  meas: { lat, pa } }`; `buildTele(opts)` (caché por vista; aire = percentil 15 de `state.sorted`, nunca por
+  debajo de −1000), `setTeleTilt` (gira imagen y medidas), `get/setTeleWindow(s)`, `get/add/set/clear/getAll/setAllTeleMeas`,
+  `drawTelerx` = `paintGray`. `state.tele = null` donde se anula `state.pano` (cargar / quitar el volumen).
+- **Interfaz** (`main.js` bloque «telerradiografía simulada»): disposición `vpTele` (botón «Telerx» /
+  «Ceph» en la barra de vistas; primera vez calcula, luego solo repinta), `.vp[data-id="vpTele"]` con
+  `#tele-canvas` y barra `#tele-lat/#tele-pa`, `#tele-ray/#tele-mip`, `#tele-tilt` (−20…+20°, con deshacer en
+  `change`), `#tele-len/#tele-ang/#tele-clear`; letras P/A o D/I (`teleLetters`, también al cambiar de idioma);
+  medidas por toques y arrastre como en la panorámica (`teleTool/telePts/teleMeasDrag`, `atmPos`, `measAtLabel`,
+  `drawMeasures`); Esc cancela; doble clic → 2×2; `shotPng` captura el `.pan-wrap`; informe: casilla
+  `#rp-tele`, figura `teleFigureUrl()` («Telerx lateral · Radiografía») y filas «Telerx lateral/frontal» en la
+  tabla; sesión: `tele: { view, mode, tilt, win, meas }` → `applySession` rehace la vista (`showTelerx` silencioso)
+  y repone ventana y medidas.
+- Límites (en la ayuda 8b): sin magnificación (1:1) frente al 8-10 % de la telerx real; solo el campo del CBCT;
+  la inclinación es en 2D (giro sobre el eje del rayo; un giro sobre otro eje exigiría reproyectar).
+- Pruebas: `tests/v081.mjs` (~4 min): lateral (334×217 a 0,5 mm; corona metálica en la mitad anterior),
+  MIP/frontal/caché, medidas por toques con el valor esperado por la escala 1:1, ángulo de 90°, Esc, Ctrl+Z/Y,
+  brillo/contraste, inclinación +10° (misma longitud, imagen girada, deshacer), captura, informe, sesión, doble
+  clic, inglés («Ceph»).
+
+## 2ae. v0.8.2 (16-09-2026) — Regla en la telerx, deslizadores de corte, modelo cortado, «Refinar alineación», informe PDF
+- **Regla** (`drawTeleRuler(cv, img, f)` en main.js): 50 mm horizontal + 50 mm vertical en la esquina inferior
+  izquierda de la telerx, marcas cada 5 mm (largas cada 10, con cifra), amarillo #FFD166 con sombra; se pinta en
+  `drawTele` (pantalla → captura) y en `teleFigureFor` (informe). No gira con la inclinación (es la escala).
+- **Deslizadores de corte**: `<input type="range" class="vslice" data-vp>` en cada MPR (`layout.js`, `vp()`),
+  vertical con `writing-mode: vertical-lr`; `onViewportInfo` lo sincroniza (max = n−1, value = corte−1) salvo
+  mientras se arrastra (`dataset.drag`); `input` → `V.setSliceIndex(id, i)` (`csUtils.jumpToSlice`). Sentido por
+  volumen (`openSeries`): `direction: rtl` (arriba = máximo) si la normal del plano (`V.viewPlaneNormal`) apunta a
+  superior (axial), anterior (coronal) o izquierda del paciente (sagital). La letra `.orient.r` se desplaza a 30 px.
+- **Modelo cortado al alinear por puntos (regresión desde v0.7.15)**: CAUSA REAL = límites CACHEADOS de los
+  puntos en vtk.js. `meshes.transform/flip/restore` movían `it.pts` en el sitio y llamaban `getPoints().modified()`,
+  que NO invalida `model.ranges` de `vtkDataArray`; `polydata.getBounds()` seguía dando la caja de ANTES de alinear
+  (45 mm desplazada). `fixClipRange` calculaba los planos con esa caja vieja → recorte «correcto» sobre una caja que
+  ya no era la del modelo. Hasta v0.7.14 no se notaba porque el rango ancho de antes (con el volumen visible) se
+  conservaba; con `applyLayout('vp3d')` Cornerstone hace `resize(keepCamera=false)` → `resetCamera` → rango
+  estrecho sobre la caja vieja → modelo cortado. Arreglo: `getPoints().dataChange()` (invalida rangos + modified).
+- **«⌖ Alinear al CBCT» → «⌖ Refinar alineación»** (`mesh_align`, ES/EN; ayuda 5).
+- **Informe en PDF** (`ui/report.js` reescrito con **jsPDF 4.2.1** (MIT, +370 kB en el bundle): `buildReportPdf(data)`
+  → A4, Helvetica (WinAnsi: acentos, «», ·, ×, ° bien; evitar U+2212), cabecera con logotipo (JPEG vía `toJpeg`),
+  dos columnas paciente/estudio, rejilla de figuras (2 por fila; `wide` a todo el ancho, alto máx. 120 mm) con
+  salto de página (`ensure`), tabla de medidas con punto de color, extra, observaciones, pie con aviso legal +
+  versión + «Página i de n» en todas las páginas; `doc.save(nombre)` descarga `tresD_informe_<paciente>_<fecha>.pdf`.
+  Capturas convertidas a JPEG (`toJpeg`, 0,88) para que el PDF pese ~0,7 MB en vez de 5. `generateReport`: 2×2 →
+  render 3D + cortes; `applyLayout('vp3d')` + `V.setView('frontal'|'lat_r'|'lat_l')` → tres vistas ampliadas
+  (`rp-views`); restaura la disposición y la cámara (`vp3.setCamera(cam0)`); telerx LATERAL radiografía siempre
+  (`teleFigureFor('lat','ray')` la calcula si falta y repone la vista que había) y, si se está viendo otra
+  (frontal o MIP), también esa. Se quitó la página HTML imprimible (`buildReportHtml`/`openReport`).
+- Pruebas: `tests/v082.mjs` (~6 min): deslizadores (3, verticales, mover uno cambia el corte y la rueda mueve el
+  deslizador, sentido del axial, letra desplazada), botón «Refinar alineación», límites al día tras alinear,
+  alinear por puntos desde el 2×2 → píxeles del modelo iguales con planos «infinitos», regla (píxeles amarillos
+  solo en su esquina, 50 mm medidos, también en la captura), PDF desde la vista frontal (3 vistas + 2 telerx,
+  sin cortes, ≥ 7 JPEG). `v080` y `v081` pasan a comprobar el PDF con `pdftotext` / `pdfinfo` / `pdfimages`
+  (poppler, instalado en el contenedor).
+
+## 2af. v0.8.3 (17-09-2026) — Polos al estilo VOXEL, Rejilla, Compartir caso, PDF con tema, botones según disposición
+- **Polos del cóndilo** (`tmj.js`, `polesAtWidest(smp, pole, thr, midX)` dentro de `refineCondyle`): el error de la
+  captura de Manuel (polos en la base del cuello) venía de medir la anchura en el nivel del clic. Ahora, a partir de
+  la huella del cóndilo (mancha aislada en el axial más ancho `bestAxialOffset`, dilatada 2 px) se sube columna a
+  columna dz −3…+6 mm (paso 0,35) hasta el ESPACIO ARTICULAR (hueco ≥ 1 mm) y, en cada nivel, se toman los extremos
+  medio-laterales (media de los 3 puntos más mediales / laterales); se elige el nivel de anchura máxima (los dos
+  polos a la misma z). Guarda: anchura ∈ [min(11, 0,8·w0), 27] mm y giro del eje ≤ 60° respecto a la primera
+  estimación; si no, se vuelve a la estimación clásica (por eso en la media muestra el lado R queda con dz ≠ 0).
+- **Rejilla** (`core/pointCloud.js`, `buildPointCloud`): preset `grid` en `presets.js`; `applyRender` oculta el
+  actor del volumen y añade un actor de puntos (SUPERFICIE del hueso = vóxel ≥ umbral con un vecino de 6 por debajo,
+  `stride` ≥ 2, máx. 1,5 M puntos, gris por intensidad con `vtkColorTransferFunction`, puntos de 2 px sin luz).
+  El umbral es el brillo (límite inferior de la ventana); al entrar en el preset se usa `autoThresholds().bone`.
+  `rebuildCloudSoon` (debounce 250 ms) al cambiar la ventana; `cloudInfo()` para las pruebas; `cloud = null` al
+  quitar el volumen.
+- **Compartir caso** (`core/sharePack.js` + `shareDialog`/`buildPackage` en main.js, botón 📦 `#btn-share`):
+  `.tresdz` = ZIP (fflate) con `dicom/NNNN.dcm` (dcmjs, CT sin comprimir, `upsertTag('7FE00010','OW')`; reducción
+  2×2×2 por media → 1/8; anonimizado: PatientName ANONIMO, PatientID tresD, sin nacimiento ni centro; se conservan
+  sexo y fecha), `escaneres/*.stl` en pose mundial (M identidad en la sesión) y `sesion.tresd` (patient null si
+  anónimo, series null, medidas de telerx/ATM en píxeles fuera si se reduce, `packaged:{reduced,anonymized}`).
+  Se abre como un ZIP (`expandZips` acepta `.tresdz`); orden de ingesta DICOM → sesión → mallas → foto.
+- **PDF con tema** (`report.js`, `THEMES` light/dark, radios `rp-theme` con el tema del visor por defecto): en oscuro
+  `paintBg` pinta el fondo de CADA página (una página nueva nace blanca). Siluetas apagadas durante la captura de los
+  MPR (se reponen). TeleRx lateral Y frontal en radiografía siempre (+ la MIP que se esté viendo).
+- **Alinear por puntos**: `V.zoom3D(1.6)` sobre el escáner (y otra vez a los 450 ms: el cambio de disposición
+  reencuadra la cámara); fase 2 `V.focusTeeth3D()` (foco = `state.teeth.all.center`, parallelScale = percentil 95
+  de las distancias × 1,1, entre 15 y 45 mm) y si no hay dentición detectada `zoom3D(2.2)`.
+- **Interfaz**: `CROSS_LAYOUTS = ['quad','main3','row']` (Cruz solo ahí, oculta y desactivada fuera); `[data-view]`,
+  Centrar y Rotación solo con el render a la vista (`applyLayout`); `#btn-rotate` va tras `#btn-center` en la barra
+  de vistas; `#btn-atm` se oculta con `state.tmj` (en `setHasCase` y `renderTmj`); `#btn-meta` = 🏷️ con tooltip;
+  siluetas apagadas por defecto (`silhouettes:false` + `#sil-vis` sin marcar); deslizadores `.vslice` con pista de
+  6 px del tema y pulgar degradado; textos `atm_r/atm_l` «1/2 … (navega en el corte axial…)»; «Telerx» → «TeleRx».
+- Pruebas: `tests/v083.mjs` (~10 min): 15 puntos (siluetas, 🏷️, Rotación, TeleRx, deslizadores, botones por
+  disposición, rejilla visible/oculta, polos L a la misma altura + anchuras, texto 1/2, alinear por puntos con
+  zoom, PDF oscuro/claro con telerx frontal y fondo de página, paquete .tresdz verificado con pydicom y reabierto).
+  Adaptadas `real`, `v073`, `v075`, `v0712`, `v0714`, `v080`, `v081`, `v082` (siluetas por defecto, Cruz oculta…).
+
+## 2ag. v0.8.4 (17-09-2026) — Deslizadores de color, Rejilla con alambre, vista derecha al alinear, PDF, panel y paquete .tresdz
+- **Deslizadores** `.vslice` del color de su corte (`--sl`: axial #E5484D, coronal #30A46C, sagital #3E63DD, los de la
+  cruz): pista `color-mix` 45 % y pomo con degradado radial del mismo color (`app.css`).
+- **«Cortes de ATM» oculto**: la regla vivía DOS veces en `setHasCase` (la segunda, `!vol`, ganaba y lo volvía a
+  enseñar). Ahora una sola en `refreshImportGroups()` (llamada desde `setHasCase` y `renderTmj`).
+- **Rejilla con alambre** (`buildWireframe` en `pointCloud.js`): marching cubes (vtk.js) al umbral sobre el volumen de
+  render submuestreado al DOBLE del paso de los puntos (mín. 4 vóxeles; al mismo paso, de lejos las líneas se
+  fundían en un relleno macizo), puntos transformados índice → mundo con el marco del volumen, actor en
+  `WIREFRAME` gris-azulado, opacidad 0,22 (× opacidad del render), sin luz; los puntos siguen encima. ~1 s en un 200³.
+  `cloudInfo()` devuelve también `tris` y `wireVisible`; `cloudShow(on)` sincroniza los dos actores.
+- **Alinear por puntos en vista DERECHA**: `V.setView('lat_r')` antes de `reset3D()` en `fit()` (fase escáner) y en
+  `paPhaseDst` (fase CBCT, seguido de `focusTeeth3D`). Las pruebas eligen ahora vértices del lado derecho (x mínimo
+  en LPS) repartidos de delante atrás, no los anteriores (desde la derecha quedarían tapados).
+- **PDF**: «Panorámica» se puede marcar aunque no se haya abierto (se calcula en `generateReport` con la curva
+  automática y el grosor / MIP de la barra); TeleRx lateral y frontal en radiografía Y MIP (4 figuras; `rep_opt_tele`).
+- **Panel izquierdo**: título «3 · Piel y foto facial» oculto con piel y foto hechas; la caja `#g3` entera sin
+  ningún botón; «Importar» (`.phead .h1`) oculto con CBCT + 2 escáneres + piel + foto.
+- **Paquete .tresdz (segunda tanda)**:
+  · Foto drapeada: `V.drapeExport()` = atlas (recorte de la cara con margen color piel, `soft.textureCanvas`) en JPEG
+    data-URL + `pose` (R, t, f, cx, cy) + geometría del atlas (`pad`, `box`, `skin`, W, H). Va en la SESIÓN
+    (`photo`, también en el .tresd) y `V.drapeImport()` la vuelve a proyectar (`projectUV`) sobre la piel que segmente
+    el receptor (misma posición en el mundo aunque el volumen esté reducido). Casilla «Incluir la foto drapeada»
+    (`#sh-photo`), propuesta solo si NO se anonimiza (sigue al cambio de la casilla de anonimizar).
+  · Escáneres con color por vértice → `escaneres/*.ply` (`writePLY` binario LE con red/green/blue; `V.meshPLY`);
+    sin color, STL como antes. El lector PLY ya devolvía `colors`.
+  · Reducción 1/4 en vez de 1/8: vóxel × ∛4 ≈ 1,59 en los tres ejes con remuestreo TRILINEAL (`volumeToDicom`,
+    pesos precalculados por eje, caché de 4 cortes); origen = centro del primer vóxel de salida.
+  · Abrir: `#in-session` («📂 Abrir», acepta .tresd/.tresdz/.zip) manda los .tresdz / .zip a `ingest()` (antes intentaba
+    `JSON.parse` del ZIP → «sesión no válida»); en la pantalla inicial dos botones (`.drop-btns`): «📁 Carpeta DICOM»
+    (`#drop-folder` → `#in-folder`) y «📦 ZIP, caso compartido (.tresdz) o sesión (.tresd)» (`#drop-open` →
+    `#in-session`), porque el clic en el recuadro abre el selector de CARPETA, que no puede elegir un ZIP.
+  · `applySession` por BLOQUES independientes (`step(nombre, fn)`): si falla uno (telerx, panorámica…) los demás
+    (ATM, foto…) se restauran igual y el estado dice «No se pudo restaurar: …» (`st_sess_partial`). Explica el
+    «no se empaquetan los cortes de ATM» de Manuel: un bloque anterior tiraba toda la restauración.
+- Pruebas: `tests/v084.mjs` (~25 min): colores de los deslizadores, títulos del panel, rejilla con triángulos,
+  botón de ATM tras refrescar el panel, vista derecha en las dos fases, PDF con panorámica calculada y 4 telerx,
+  segmentación + foto manual + segundo escáner (títulos ocultos), paquete con PLY + foto + 1/4 verificado con
+  pydicom, reabierto con «📂 Abrir» (foto, color, ATM, panorámica) y con «Subir ZIP». `real.mjs` y `v083.mjs`
+  adaptados a la vista derecha.
+
+## 2ah. v0.8.5 (17-09-2026) — ZIP en Worker, render al importar, PNG sin fondo, página de vía aérea, PowerPoint, app instalable
+- **ZIP «no lo detecta»** (Manuel): el `unzip` ASÍNCRONO de fflate lanza UN Web Worker POR ARCHIVO del ZIP: con un
+  CBCT de cientos de cortes se quedaba sin memoria / colgaba (en Node, el mismo `unzip` de un ZIP de 162 MB muere
+  por OOM; `unzipSync` tarda 4 s y 620 MB). Ahora `core/unzip.worker.js` (Worker propio, `unzipSync`, buffers
+  transferidos) y `expandZips` recursivo (ZIP dentro de ZIP, 2 niveles). Si no hay series, el estado dice cuántos
+  archivos se leyeron y ejemplos (`st_files_seen`) y la consola lista los 20 primeros.
+- **Archivos comprimidos por su FIRMA** (`sniffArchive`): «Ese archivo no es una sesión» salía con el ZIP de Manuel
+  porque su nombre no acababa en .zip/.tresdz (el manejador de «📂 Abrir» decidía por la extensión). Ahora «📂 Abrir»
+  y `expandZips` miran los primeros bytes: `PK` = ZIP (con cualquier extensión o sin ella), `Rar!` / `7z` / gzip
+  → aviso `st_archive_other` («…es un archivo RAR: el visor solo abre ZIP. Descomprímelo…»). Solo se mira la firma de
+  los archivos SIN extensión conocida (.dcm, .stl, .jpg… no se tocan).
+- **RAR (WinRAR)**: el «ZIP» de Manuel era un .rar. `core/unrar.worker.js` con **node-unrar-js 2.0.2** (MIT; el unrar
+  oficial de RARLAB en WebAssembly, licencia UnRAR: solo descomprimir) → `docs/assets/unrar.wasm` (208 kB, se carga al
+  usarlo) + `unrar.worker.js`. `expandZips` trata .rar (o firma `Rar!`) igual que ZIP (RAR4/RAR5, 217 cortes en ~4 s);
+  volúmenes partidos (.part1.rar) NO. `#in-zip` / `#in-session` aceptan .rar; textos «Subir ZIP / RAR». 7z y .gz siguen
+  con el aviso. Para las pruebas se instaló `rar` (apt, trial) y se crean .rar en `tests/v085.mjs`.
+- **Sello de versión con hash** (`scripts/version_stamp.mjs`): `?v=0.8.5-<sha1 8>` de index.js + index.css: dos builds
+  de la misma versión ya no comparten caché (pasó con la 0.8.4).
+- **Al importar un escáner** se activa la vista del render: `ingestMeshes` → si el 3D no está a la vista,
+  `applyLayout('vp3d')`; si el volumen estaba apagado, se enciende.
+- **Render sin fondo** (`V.shot3DAlpha(maxW)`): dos renders (fondo negro y blanco) → alfa = 1 − (B − N)/255 por píxel y
+  color = N/alfa (difference matting; vale para lo translúcido). PNG con transparencia (jsPDF lo respeta con
+  `smask`); casilla `rp-png` (marcada). El fondo del visor se repone (`viewerBg()`).
+- **Página de vía aérea** (`airwayReportSection` en main.js → `data.airway` → `report.js` / `reportPptx.js`): 3D a
+  solas, cráneo + escáneres + piel al 40 % (60 % de transparencia), vía aérea opaca con mapa de calor, volumen solo
+  si no hay cráneo segmentado (también al 40 %), vista `lat_r`; tabla Medida / Valor / Norma (adulto) / Desviación
+  con punto de color (`CLASS_RGB`), leyenda del mapa (`V.heatColorAt`, MCA → percentil 85), altura del segmento,
+  aviso pediátrico / sin sexo, criterio de valoración y referencia (Guijarro-Martínez & Swennen 2013). Todo se
+  repone después (visibilidad y opacidad de cada malla, volumen, mapa de calor).
+- **PowerPoint** (`ui/reportPptx.js`, **PptxGenJS 4.0.1** MIT, `import()` dinámico → chunk `pptxgen.es.js` +
+  `reportPptx.js` + `rolldown-runtime.js`, que hay que entregar en docs/assets): 16:9, portada con logotipo y dos
+  columnas, una diapositiva por figura, vía aérea (imagen + leyenda + tabla), medidas (12 por diapositiva) y
+  observaciones; pie con aviso, versión y «i de n»; fuente Segoe UI. Radios `rp-format` PDF / PowerPoint / Ambos.
+- **App instalable** (`public/manifest.webmanifest` + `<link rel="manifest">` + `theme-color`): `display:
+  standalone`, iconos existentes (icon-192/512) y `file_handlers` para `.tresdz` / `.tresd`; en main.js
+  `launchQueue.setConsumer` → `ingest(files)`. Instalada desde Chrome/Edge, Windows enseña esos archivos con el icono
+  de tresD y el doble clic los abre (ayuda §12). Sin instalar, la web no puede registrar tipos de archivo.
+- Pruebas: `tests/v085.mjs` (~12 min): manifest y sello, ZIP anidado, ZIP con carpeta «Paciente Pérez» + DICOMDIR,
+  ZIP sin DICOM, render al importar, PNG con alfa (esquina 0 / centro 255, fondo repuesto), vía aérea + informe en
+  «Ambos» (PDF con página de vía aérea y ≥ 4 smask; PPTX válido: ≥ 6 diapositivas con pie y referencia), solo PPTX.
+- Helvetica de jsPDF (WinAnsi) NO tiene «≥» ni «−» (U+2212): salen como `"e` y `"`. Textos del PDF sin esos signos.
+
+## 2ai. v0.8.6 (18-09-2026) — Orientar el volumen, deslizadores bajo los cortes, PowerPoint que sí baja, ventana de progreso
+- **Orientar el volumen** (`setOrient` / `getOrient` en viewer.js + panel `#orient-box` en el panel izquierdo):
+  tres deslizadores (±30°, paso 0,5°) enderezan la cabeza en los tres planos. Como los cortes MPR van por los ejes
+  del MUNDO, se gira EL CASO ENTERO alrededor del centro del volumen y así los cortes —y todo lo que sale de
+  ellos: panorámica, TeleRx, ATM— quedan con el paciente derecho. Ángulos LPS: x = asentir (sagital, eje X),
+  y = inclinación lateral (coronal, eje Y), z = giro (axial, eje Z); R = Rz·Ry·Rx.
+  · Los ángulos son ABSOLUTOS y cada llamada aplica solo la DIFERENCIA (`R_nuevo · R_actualᵀ`): los deslizadores no
+    acumulan error y «Orientación original» deja el volumen EXACTAMENTE donde estaba (0,000 mm en la prueba).
+  · Volumen: `imageData.setDirection/​setOrigin` (las FILAS de la matriz de dirección de vtk.js son los ejes i, j, k;
+    comprobado: `indexToWorld` tras girar coincide con la matriz esperada con error 0,0000 mm) + `vol.direction` y
+    `vol.origin` de Cornerstone. También el volumen de RENDER (`renderVolumeId`), o el 3D se quedaría torcido.
+  · Lo demás se gira con la misma matriz 4×4: mallas (`meshes.transform`: escáneres, cráneo, piel, vía aérea),
+    medidas 3D, anotaciones de los cortes (puntos y caja de texto), polos de ATM, límites de la vía aérea y la POSE
+    de la foto drapeada (las UV no cambian: la textura va pegada a los vértices). Se invalidan `enamel`/`teeth`
+    (se re-detectan sobre el volumen derecho), la caché de TeleRx y la nube de la rejilla.
+  · Lo caro se rehace al SOLTAR el deslizador (`finishOrient`): cortes de ATM (`restoreTmj` con los polos girados) y
+    panorámica (curva desde los puntos de control girados). Mientras se arrastra solo se gira la geometría (90 ms
+    de debounce). Prueba clave: con el volumen girado 12°, «Refinar alineación» mueve el escáner 0,43 mm → el caso
+    gira coherentemente y el escáner sigue sobre los dientes.
+  · Sesión: `orient` en el .tresd; al restaurar se aplica ANTES que nada con `{ volumeOnly: true }` (las mallas y las
+    medidas guardadas ya vienen en el marco girado). En el paquete .tresdz va `orient: null`: `volumeToDicom` usa
+    `indexToWorld`, así que el DICOM exportado sale YA enderezado.
+- **Deslizadores de corte BAJO cada corte** (petición de Manuel): horizontales, pegados al borde inferior, al 94 %
+  del ancho; suben la letra de orientación inferior y el pie de información (`:has(.vslice:not(.hidden))`).
+- **El PowerPoint no se descargaba** en el PC de Manuel: `buildReportPptx` devuelve ahora un **Blob**
+  (`pptx.write({ outputType: 'blob' })`) y lo descarga `download()` de main.js —el mismo camino que la sesión y el
+  paquete, que sí le funcionaban— en vez del `writeFile` interno de PptxGenJS. Con «Ambos» las dos descargas se
+  separan 1,2 s: dos descargas seguidas las bloquea Chrome («¿Descargar varios archivos?»).
+- **Ventana de progreso** (`busyModal(title)` → `{ text, pct, close }`, `.modal.busy` con rueda y barra): informe
+  (con el paso: capturas, TeleRx, vía aérea, PDF, PowerPoint), segmentación y foto drapeada, que en equipos
+  modestos tardan 20-30 s y parecía que el visor se había colgado.
+- **Al terminar de alinear** (por puntos y «Refinar alineación») se ve el render 3D con el CBCT y los escáneres
+  encendidos (`showRenderWithMeshes`).
+- **La piel fuera de la captura de vía aérea** del informe (tapaba la columna de aire); el cráneo y los escáneres
+  siguen al 40 %.
+- Pruebas: `tests/v086.mjs` (~20 min): deslizadores horizontales y sin tapar el pie, giro exacto y vuelta exacta,
+  el escáner gira con el volumen y sigue alineado tras refinar, render tras alinear, orientación en la sesión,
+  ventana de progreso en segmentación e informe, PDF+PPTX con «Ambos», PPTX válido y sin piel en la vía aérea.
+
 ## 3. TRAMPAS descubiertas (no volver a caer)
+- **`unzip` asíncrono de fflate = un worker por archivo**: nunca para ZIP con cientos de archivos. `unzipSync` en un
+  Worker propio.
+- **Playwright `setInputFiles` con un archivo de 160 MB se queda colgado** (sin error): los ZIP grandes se prueban
+  en Node (`unzipSync`) y en el navegador solo los pequeños.
+- **jsPDF/Helvetica no tiene ≥ ni −**: revisar los textos nuevos del informe con `pdftotext`.
+- **`python -m http.server` no manda `Cache-Control`**: Chrome guarda `index.html` por heurística y al abrir el .bat
+  Manuel veía la versión ANTERIOR (los `?v=` de los assets no sirven si el propio index.html es el viejo). Desde
+  v0.8.4 `servidor_local.py` responde `no-store` y el .bat abre `/?t=aleatorio`.
+- **La matriz de dirección de vtk.js va por FILAS** (fila 0 = eje i en el mundo): al girar un volumen hay que
+  multiplicar cada fila por R. Comprobarlo SIEMPRE con `indexToWorld` antes y después (si estuviera transpuesta, el
+  volumen giraría al revés que las mallas y nadie lo vería hasta tener un escáner encima).
+- **Al girar el volumen hay que girar TAMBIÉN el volumen de render** (`renderVolumeId`): es una copia con su propia
+  dirección y si no, el 3D se queda torcido respecto a los cortes.
+- **`pptx.writeFile()` de PptxGenJS descarga por su cuenta**: si el navegador la bloquea no hay error ninguno.
+  Mejor pedirle el Blob (`write({ outputType: 'blob' })`) y descargarlo con el mismo camino que el resto.
+- **Dos descargas seguidas las bloquea Chrome** («¿Descargar varios archivos?»): separarlas en el tiempo.
+- **Dos `classList.toggle` sobre el mismo botón en la misma función**: gana el último. Antes de añadir una regla de
+  visibilidad, grep del selector en TODO el archivo (regla 1) — `#btn-atm` estuvo una versión sin ocultarse por esto.
+- **Un alambre (wireframe) al paso de los vóxeles se ve macizo de lejos**: hay que submuestrear más que los puntos.
+- **`getComputedStyle().backgroundColor` de un `color-mix` devuelve `color(srgb r g b)`** con decimales, no `rgb(…)`:
+  las pruebas deben aceptar los dos formatos.
+- **Una restauración larga en secuencia (sesión) debe ir por bloques con su propio try/catch**: un fallo en la
+  telerx dejaba sin ATM ni foto.
+- **vtk.js: un `vtkDataArray` uchar de 1 componente se interpreta como COLOR directo** (no pasa por la tabla de
+  colores) → una nube de puntos con escalares Uint8 sale invisible. Escalares Float32 + `setColorModeToMapScalars()`.
+- **Los polos del cóndilo NO se miden en el nivel del clic**: el usuario pincha donde ve el cóndilo en el axial
+  (a menudo el cuello); hay que subir hasta el espacio articular y quedarse con la sección más ancha (VOXEL).
+- **Una página nueva de jsPDF nace blanca**: con fondo oscuro hay que pintarlo en `addPage()` (y en la primera).
 - **Al copiar una barra de aviso (#aw-bar → #atm-bar) revisar TODOS los selectores del flujo original**:
   un `#atm-bar` en `awRestore` dejó el aviso de la vía aérea colgado durante tres versiones sin que ninguna
   prueba lo viera (comprobaban las siluetas, no la barra). Toda barra de aviso debe tener una prueba de
@@ -823,6 +1114,9 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   mano con el tiempo entre pulsaciones.
 - **`viewer.screenshot` solo ve los visores de Cornerstone**: la panorámica y el mosaico de ATM son canvas
   propios; cualquier vista nueva que no sea un visor de Cornerstone hay que componerla aparte.
+- **Las medidas de los cortes MPR van en SVG, no en el canvas**: `shotDom` (solo canvas) no las saca. Para
+  incluirlas hay que serializar la capa `svg` a imagen (`shotDomAsync`, asíncrono). La cruz también es SVG:
+  se quita con `suspendCrosshairs(true)` (setToolDisabled borra sus anotaciones; al reactivar se recoloca sola).
 - **La línea media del paciente NO es x = 0**: el origen DICOM puede estar en una esquina. Cualquier
   izquierda/derecha o medial/lateral se decide comparando con el centro del volumen (o, mejor, con un punto
   anatómico medio), nunca con el signo o el valor absoluto de x.
@@ -912,6 +1206,17 @@ Petición de Manuel (7 puntos) + un fallo que apareció al probar («algunos DIC
   (Node, ~15 s) + `tests/real.mjs` (navegador, ~5 min):
   alineación con dientes REALES (auto y por puntos), siluetas, colores de mediciones y trazado en vivo,
   dentición fina. Ver 2i.
+- `tests/v080.mjs`: informe y sesión .tresd (ver 2ac); necesita `cbct_half/` y `real_scans/upper.stl`.
+- `tests/v081.mjs`: telerradiografía simulada (ver 2ad); necesita `cbct_half/`.
+- `tests/v082.mjs`: regla, deslizadores, modelo cortado, PDF (ver 2ae); necesita `cbct_half/` y `meshes/arch_upper.stl`;
+  usa `pdftotext`, `pdfinfo`, `pdfimages` y `pdftoppm` (poppler-utils) y Python + Pillow + numpy.
+- `tests/v083.mjs`: los 15 puntos de v0.8.3 (ver 2af); necesita `cbct_half/` y `real_scans/upper.stl`; usa poppler,
+  Pillow y **pydicom** (`pip install pydicom`) para verificar el paquete .tresdz.
+- `tests/v084.mjs`: los 12 puntos de v0.8.4 (ver 2ag); necesita `cbct_half/`, `real_scans/upper.stl` y `lower.stl`,
+  `meshes/arch_lower.ply` (con color); poppler, Pillow y pydicom.
+- `tests/v085.mjs`: v0.8.5 (ver 2ah); necesita `cbct_half/`, `cbct_half.zip`, `cbct_dicomdir/`, `real_scans/upper.stl`;
+  poppler, Pillow, `zip` y `rar` (`apt-get install rar`). Crea sus ZIP / RAR de prueba en `/tmp/testdata/ziptest_v085/`.
+- `tests/v086.mjs`: v0.8.6 (ver 2ai); necesita `cbct_half/` y `real_scans/upper.stl`; poppler y Pillow.
 - Manuel YA probó con un CBCT real (10-09-2026): carga y funciona en su PC. Pendiente: su opinión sobre
   el nuevo render. Si algún caso grande se atasca: `decimatedVolumeLoader` de Cornerstone o rebajar la
   resolución del render (como `RENDER_MAX_DIM=400` de VOXEL).

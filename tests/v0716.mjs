@@ -47,7 +47,7 @@ const secs = await ev(() => [...document.querySelectorAll('.modal.help .help-sec
 check(secs.length >= 10 && /Empezar/.test(secs[0]) && secs.some((s) => /ATM/.test(s)) && secs.some((s) => /Panorámica/.test(s)), `${secs.length} secciones: ${secs.slice(0, 3).join(' | ')} …`);
 const items = await ev(() => document.querySelectorAll('.modal.help .help-sec li').length);
 check(items >= 30, `${items} apartados de ayuda (antes 7 líneas)`);
-check(/v0\.7\.\d+/.test(await ev(() => document.querySelector('.modal.help .help-about').textContent)), 'termina con la versión y los motores');
+check(/v\d+\.\d+\.\d+/.test(await ev(() => document.querySelector('.modal.help .help-about').textContent)), 'termina con la versión y los motores');
 await shot('v0716_ayuda.png');
 await page.keyboard.press('Escape'); await sleep(200);
 check((await page.locator('.modal.help').count()) === 0, 'Esc la cierra');

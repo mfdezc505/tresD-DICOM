@@ -141,7 +141,7 @@ await page.click('#pan-edit'); await sleep(1200);
 console.log('— cortes de ATM');
 await page.click('#btn-atm'); await sleep(1200);
 // desde v0.7.5 el aviso de la ATM tiene su propia barra sobre el corte coronal (#atm-bar)
-check(!(await page.locator('#atm-bar').evaluate((e) => e.classList.contains('hidden'))) && /ATM 1\/2/.test(await page.textContent('#atm-text')), 'pide marcar el cóndilo derecho');
+check(!(await page.locator('#atm-bar').evaluate((e) => e.classList.contains('hidden'))) && /^1\/2 Clic sobre el cóndilo derecho/.test(await page.textContent('#atm-text')), 'pide marcar el cóndilo derecho');
 const SEEDS = [[-54, -24, 43], [50, -29, 45]];    // cóndilos del CBCT DZ (medidos sobre el volumen)
 const corBox = await page.locator('#vpCor').boundingBox();
 for (const w of SEEDS) {

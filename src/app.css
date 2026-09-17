@@ -15,6 +15,14 @@
 #patient-chip { font-weight: 700; font-size: calc(15px * var(--fs)); color: var(--patient-text); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; min-width: 0; cursor: pointer; user-select: none; }
 #patient-chip.masked { color: var(--muted); font-weight: 500; font-style: italic; }
+.modal.report { width: min(560px, 94vw); }
+.modal.report .rep-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.modal.report textarea { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; outline: none; font-family: inherit; font-size: calc(13px * var(--fs)); resize: vertical; }
+.modal.report textarea:focus { border: 2px solid var(--accent); }
+.modal.report .rep-theme { gap: 14px; align-items: center; }
+.modal.report .rep-theme > span:first-child { min-width: 92px; }
+.modal.report .frow { display: flex; gap: 10px; }
+.modal.report .frow > span { flex: 0 0 120px; color: var(--text2); font-size: calc(13px * var(--fs)); padding-top: 6px; }
 .modal.patient .frow { display: flex; align-items: center; gap: 10px; }
 .modal.patient .frow > span { flex: 0 0 120px; color: var(--text2); font-size: calc(13px * var(--fs)); }
 .modal.patient .frow > input, .modal.patient .frow > select { flex: 1; }
@@ -96,6 +104,8 @@
 #main-drop img { width: min(56%, 560px); min-width: 260px; max-height: 26%; object-fit: contain; margin-bottom: 14px; }
 #main-drop .drop-cta { font-weight: 500; color: var(--accent); margin-top: 26px; }
 #main-drop .owner { position: absolute; bottom: 14px; font-size: calc(12px * var(--fs)); color: var(--muted); font-weight: 500; }
+#main-drop .drop-btns { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 18px; }   /* v0.8.4: carpeta / ZIP / .tresdz / .tresd desde la pantalla inicial */
+#main-drop .drop-btns button { width: auto; padding: 10px 22px; font-size: calc(14px * var(--fs)); }
 
 /* ---------------- rejilla de visores (multipantalla) ---------------- */
 #grid { position: absolute; inset: 0; display: grid; gap: 6px; }
@@ -120,6 +130,9 @@
 #grid .vp .orient.b { bottom: 6px; left: 50%; transform: translateX(-50%); }
 #grid .vp .orient.l { left: 8px; top: 50%; transform: translateY(-50%); }
 #grid .vp .orient.r { right: 8px; top: 50%; transform: translateY(-50%); }
+/* el deslizador va abajo (v0.8.6): suben la letra de orientación inferior y el pie de información */
+#grid .vp:has(.vslice:not(.hidden)) .orient.b { bottom: 22px; }
+#grid .vp:has(.vslice:not(.hidden)) .vpinfo { bottom: 20px; }
 #grid .vp .overlay { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 #grid .vp .overlay svg.rubber { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 #grid .vp .overlay svg.rubber line { stroke-width: 2; stroke-dasharray: 6 4; }
@@ -224,6 +237,60 @@
 #grid .vp.editing .cs, #grid .vp.editing .cs * { cursor: crosshair !important; }
 #grid .vp[data-id="vpPan"] .pan-bar #pan-thick-val { min-width: 44px; }
 #grid .vp[data-id="vpPan"] .vpinfo { bottom: 46px; }
+
+/* ---------------- compartir caso (v0.8.3) ---------------- */
+.modal.share { width: min(560px, 94vw); }
+.modal.share .rep-opts { display: grid; grid-template-columns: 1fr; gap: 8px 14px; }
+.modal.share .hint.small { font-size: calc(11.5px * var(--fs)); color: var(--text2); }
+.modal.share small.muted { color: var(--text2); font-weight: 400; }
+
+/* ---------------- deslizador de corte en los MPR (v0.8.2): tabletas y ratones sin rueda ---------------- */
+/* v0.8.6 (petición de Manuel): BAJO cada corte, no a la derecha */
+#grid .vp .vslice { position: absolute; left: 12px; right: 12px; bottom: 6px; width: auto; height: 6px; margin: 0; z-index: 3;
+  -webkit-appearance: none; appearance: none; background: color-mix(in srgb, var(--sl) 45%, var(--border)); border-radius: 3px; cursor: pointer; opacity: .85; touch-action: none; }
+#grid .vp .vslice:hover, #grid .vp .vslice:active { opacity: 1; }
+/* v0.8.4: cada deslizador del COLOR de su corte (los mismos de la cruz y de los planos MPR en el 3D) */
+#grid .vp[data-id="vpAx"] .vslice { --sl: #E5484D; }
+#grid .vp[data-id="vpCor"] .vslice { --sl: #30A46C; }
+#grid .vp[data-id="vpSag"] .vslice { --sl: #3E63DD; }
+#grid .vp .vslice::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff;
+  background: radial-gradient(circle at 35% 32%, color-mix(in srgb, var(--sl) 55%, #fff) 0%, var(--sl) 55%, color-mix(in srgb, var(--sl) 55%, #000) 100%); }
+#grid .vp .vslice::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff;
+  background: radial-gradient(circle at 35% 32%, color-mix(in srgb, var(--sl) 55%, #fff) 0%, var(--sl) 55%, color-mix(in srgb, var(--sl) 55%, #000) 100%); }
+#grid .vp.editing .vslice, #grid .vp[data-id="vpAx"].editing .vslice { display: none; }
+
+/* ---------------- orientar el volumen (v0.8.6) ---------------- */
+.orient-box { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--seg-bg); }
+.orient-box .gsub { font-size: calc(11.5px * var(--fs)); font-weight: 700; color: var(--text2); margin-bottom: 2px; }
+.orient-box .orow { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "lbl val" "sld sld"; align-items: center; gap: 2px 6px; font-size: calc(11.5px * var(--fs)); color: var(--text2); }
+.orient-box .orow > span { grid-area: lbl; }
+.orient-box .orow > b { grid-area: val; font-variant-numeric: tabular-nums; color: var(--text); }
+.orient-box .orow > input { grid-area: sld; width: 100%; }
+.orient-box button { margin-top: 4px; }
+
+/* ---------------- ventana de progreso (v0.8.6): procesos largos (informe, segmentación, foto) ---------------- */
+.modal.busy { min-width: 340px; align-items: center; text-align: center; }
+.modal.busy .spin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent); animation: tdspin .9s linear infinite; }
+@keyframes tdspin { to { transform: rotate(360deg); } }
+.modal.busy .bt { font-weight: 700; color: var(--text); font-size: calc(14px * var(--fs)); }
+.modal.busy .bs { color: var(--text2); font-size: calc(12px * var(--fs)); min-height: 1.2em; }
+.modal.busy .bbar { width: 100%; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.modal.busy .bbar > i { display: block; height: 100%; width: 0; background: var(--grad); transition: width .2s; }
+
+/* ---------------- telerradiografía simulada (v0.8.1): misma disposición que la panorámica ---------------- */
+#grid .vp[data-id="vpTele"] .pan-wrap { position: absolute; inset: 0 0 40px 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#grid .vp[data-id="vpTele"] canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; cursor: default; }
+#grid .vp[data-id="vpTele"] canvas.measuring { cursor: crosshair; }
+#grid .vp[data-id="vpTele"] .pan-bar { position: absolute; left: 0; right: 0; bottom: 0; min-height: 40px; display: flex; align-items: center; gap: 6px 10px; padding: 4px 12px;
+  background: color-mix(in srgb, var(--viewer-bg) 85%, transparent); border-top: 1px solid var(--border); font-size: calc(12px * var(--fs)); color: var(--text2); z-index: 3;
+  white-space: nowrap; flex-wrap: wrap; overflow: hidden; }
+#grid .vp[data-id="vpTele"] .pan-bar input[type="range"] { flex: 0 1 120px; min-width: 56px; }
+#grid .vp[data-id="vpTele"] .pan-bar > label, #grid .vp[data-id="vpTele"] .pan-bar > span { flex: 0 0 auto; }
+#grid .vp[data-id="vpTele"] .pan-bar #tele-tilt-val { min-width: 40px; }
+#grid .vp[data-id="vpTele"] .pan-bar .vsep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+#grid .vp[data-id="vpTele"] .pan-bar button { min-height: 26px; padding: 2px 10px; font-size: calc(12px * var(--fs)); }
+#grid .vp[data-id="vpTele"] .pan-bar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#grid .vp[data-id="vpTele"] .vpinfo { bottom: 46px; }
 
 /* ---------------- cortes de ATM (mosaico por lado) ---------------- */
 #grid .vp[data-id="vpAtm"] .atm-grid { position: absolute; inset: 26px 0 42px 0; display: grid; gap: 4px 3px;

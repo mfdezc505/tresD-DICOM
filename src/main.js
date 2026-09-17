@@ -5,8 +5,11 @@ import { loadLang, setLang, getLang, t, applyI18n } from './i18n/i18n.js';
 import { buildLayout, orientationLetters, meshCard } from './ui/layout.js';
 import { buildMetadata, renderTable, exportJSON, exportCSV, download, updateSummaryPatient } from './ui/metadata.js';
 import { openHelp } from './ui/help.js';
+import { buildReportPdf, toJpeg } from './ui/report.js';
+import { VERSION } from './version.js';
+import { volumeToDicom, zipEntries } from './core/sharePack.js';
 import { openFeedback, scheduleFeedback, feedbackState } from './ui/feedback.js';
-import { collectFromDataTransfer, collectFromFileList, expandZips, scanDicom, fmtDate } from './core/dicomLoad.js';
+import { collectFromDataTransfer, collectFromFileList, expandZips, sniffArchive, scanDicom, fmtDate } from './core/dicomLoad.js';
 import { isMeshName, guessRole, readMesh } from './core/meshes.js';
 import { GUIDED_POINTS } from './core/drape.js';
 import { showLegal, termsAccepted } from './ui/legal.js';
@@ -22,6 +25,7 @@ const FONT_DEFAULT = 0.88;                    // «Pequeña» por defecto (petic
 
 let seriesList = [];
 let current = null;                 // serie cargada
+const CROSS_LAYOUTS = ['quad', 'main3', 'row'];   // disposiciones con cortes MPR a la vista (cruz)
 let layout = 'quad';
 let maximized = null;
 let rotTimer = null;
@@ -47,6 +51,9 @@ async function main() {
   V.state.onViewportInfo = (id, info) => {
     const box = document.querySelector(`.vp[data-id="${id}"] .vpinfo`);
     if (box) box.textContent = t('slice_of', { i: info.slice, n: info.n }) + '\n' + t('wl', { w: info.window, l: info.level });
+    // deslizador de corte (v0.8.2): sigue a la rueda / la cruz; no se toca mientras el usuario lo arrastra
+    const sl = document.querySelector(`.vp[data-id="${id}"] .vslice`);
+    if (sl && !sl.dataset.drag) { sl.max = String(Math.max(0, info.n - 1)); sl.value = String(info.slice - 1); sl.classList.toggle('hidden', info.n < 2); }
   };
   V.state.onMeasureDone = () => setStatus(t(V.state.measureMode === 'linear' ? 'st_measure_dist' : 'st_measure_ang'));
   V.state.onMeshesChanged = syncCards;
@@ -102,6 +109,467 @@ function setOrientLetters() {
     if (!vp) continue;
     for (const k of ['t', 'b', 'l', 'r']) { const s = vp.querySelector('.orient.' + k); if (s && o[k]) s.textContent = o[k]; }
   }
+  teleLetters();
+}
+
+// ------------------------------------------------------------------ INFORME (v0.8.0)
+/** Ventana previa del informe: qué incluir y observaciones; «Generar» abre la página imprimible. */
+function openReportDialog() {
+  if (!V.hasCase()) return;
+  const has = { vol: !!current, pano: !!V.state.pano, tele: !!current, tmj: !!V.state.tmj, meas: reportMeasures().list.length > 0, airway: !!(V.airwayMesh() && V.airwayMesh().airway) };
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  const chk = (id, key, on, dis) => `<label class="chk"><input type="checkbox" id="${id}"${on ? ' checked' : ''}${dis ? ' disabled' : ''}><span>${t(key)}</span></label>`;
+  bg.innerHTML = `<div class="modal report"><h3>${t('rep_dlg_title')}</h3><div class="hint">${t('rep_dlg_hint')}</div>
+    <div class="rep-opts">
+      ${chk('rp-pat', 'rep_opt_patient', !chipHidden, false)}
+      ${chk('rp-3d', 'rep_opt_3d', true, false)}
+      ${chk('rp-views', 'rep_opt_views', true, false)}
+      ${chk('rp-mpr', 'rep_opt_mpr', has.vol, !has.vol)}
+      ${chk('rp-pano', 'rep_opt_pano', has.pano, !has.vol)}
+      ${chk('rp-tele', 'rep_opt_tele', has.tele, !has.tele)}
+      ${chk('rp-atm', 'rep_opt_atm', has.tmj, !has.tmj)}
+      ${chk('rp-airway', 'rep_opt_airway', has.airway, !has.airway)}
+      ${chk('rp-meas', 'rep_opt_meas', has.meas, !has.meas)}
+      ${chk('rp-png', 'rep_opt_png', true, false)}
+    </div>
+    <div class="frow rep-theme"><span>${t('rep_format')}</span>
+      <label class="chk"><input type="radio" name="rp-format" value="pdf" checked><span>PDF</span></label>
+      <label class="chk"><input type="radio" name="rp-format" value="pptx"><span>PowerPoint</span></label>
+      <label class="chk"><input type="radio" name="rp-format" value="both"><span>${t('rep_format_both')}</span></label></div>
+    <div class="frow rep-theme"><span>${t('rep_theme')}</span>
+      <label class="chk"><input type="radio" name="rp-theme" value="dark"${document.documentElement.dataset.theme !== 'light' ? ' checked' : ''}><span>${t('rep_theme_dark')}</span></label>
+      <label class="chk"><input type="radio" name="rp-theme" value="light"${document.documentElement.dataset.theme === 'light' ? ' checked' : ''}><span>${t('rep_theme_light')}</span></label></div>
+    <label class="frow" style="align-items:flex-start"><span>${t('rep_notes')}</span><textarea id="rp-notes" rows="4" maxlength="2000" placeholder="${t('rep_notes_ph')}"></textarea></label>
+    <div class="mrow"><button class="btn-ghost" id="dlg-cancel">${t('dlg_cancel')}</button>
+    <button class="btn-primary" style="width:auto;min-height:40px;padding:8px 22px" id="dlg-ok">${t('rep_generate')}</button></div></div>`;
+  bg.querySelector('#dlg-cancel').addEventListener('click', () => bg.remove());
+  bg.addEventListener('click', (e) => { if (e.target === bg) bg.remove(); });
+  bg.querySelector('#dlg-ok').addEventListener('click', async () => {
+    const opts = { patient: bg.querySelector('#rp-pat').checked, v3d: bg.querySelector('#rp-3d').checked, views: bg.querySelector('#rp-views').checked, mpr: bg.querySelector('#rp-mpr').checked,
+      pano: bg.querySelector('#rp-pano').checked, tele: bg.querySelector('#rp-tele').checked, atm: bg.querySelector('#rp-atm').checked, meas: bg.querySelector('#rp-meas').checked, notes: bg.querySelector('#rp-notes').value.trim(), theme: (bg.querySelector('input[name="rp-theme"]:checked') || {}).value || 'dark',
+      airway: bg.querySelector('#rp-airway').checked, png: bg.querySelector('#rp-png').checked, format: (bg.querySelector('input[name="rp-format"]:checked') || {}).value || 'pdf' };
+    bg.remove();
+    await generateReport(opts);
+  });
+  document.body.appendChild(bg);
+}
+
+/**
+ * Ventana de PROGRESO (v0.8.6, petición de Manuel): los procesos largos (informe, segmentación, foto drapeada,
+ * vía aérea) tardan 20-30 s en equipos modestos y parecía que el visor se había colgado. Devuelve
+ * { text(msg), pct(0..100 | null), close() }. No tiene botones: se cierra sola al terminar.
+ */
+function busyModal(title) {
+  const bg = document.createElement('div'); bg.className = 'modal-bg busy-bg';
+  bg.innerHTML = `<div class="modal busy"><div class="spin"></div><div class="bt">${title}</div><div class="bs"></div><div class="bbar hidden"><i></i></div></div>`;
+  bg.addEventListener('click', (e) => e.stopPropagation());
+  document.body.appendChild(bg);
+  const sub = bg.querySelector('.bs'), bar = bg.querySelector('.bbar'), fill = bg.querySelector('.bbar > i');
+  return {
+    text(msg) { sub.textContent = msg || ''; },
+    pct(v) { bar.classList.toggle('hidden', v == null); if (v != null) fill.style.width = Math.max(0, Math.min(100, v)) + '%'; },
+    close() { bg.remove(); },
+  };
+}
+
+/** Espera a que Cornerstone pinte tras un cambio de disposición. */
+const settle = (ms) => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, ms))));
+
+/** Recoge las medidas de todas las vistas para la tabla del informe. */
+function reportMeasures() {
+  const list = [], extra = [];
+  const vpName = { vp3d: t('vp_3d'), vpAx: t('vp_axial'), vpCor: t('vp_coronal'), vpSag: t('vp_sagittal') };
+  for (const m of V.getMeasures().v3d) list.push({ where: vpName.vp3d, type: m.type, value: m.label, color: m.color });
+  for (const m of V.getMprMeasureValues()) list.push({ where: vpName[m.where] || m.where, type: m.type, value: m.value, color: m.color });
+  if (V.state.pano) for (const m of V.getPanoMeas()) list.push({ where: t('rep_opt_pano'), type: m.type === 'ang' ? 'angle' : 'linear', value: measText(m, V.state.pano.image.step), color: m.color });
+  if (V.state.tele) for (const [view, arr] of Object.entries(V.getAllTeleMeas())) { const img = V.state.tele.cache[view] && V.state.tele.cache[view].ray; for (const m of arr) list.push({ where: teleName(view), type: m.type === 'ang' ? 'angle' : 'linear', value: img ? measText(m, img.step) : '—', color: m.color }); }
+  if (V.state.tmj) {
+    const fam = { sag: t('atm_sag_c').split(' ')[0], cor: t('atm_cor'), axi: t('atm_axi') };
+    for (const [key, arr] of Object.entries(V.getAllTmjMeas())) {
+      const [side, family, off] = key.split('|');
+      const it = (V.state.tmj.series[side] || []).find((x) => x.family === family && String(x.off) === off);
+      const where = `${t('layout_atm')} ${t(side === 'R' ? 'atm_side_r' : 'atm_side_l').toLowerCase()} · ${it ? atmLabel(it) : `${fam[family] || family} ${off} mm`}`;
+      for (const m of arr) list.push({ where, type: m.type === 'ang' ? 'angle' : 'linear', value: it ? measText(m, it.img.step) : '—', color: m.color });
+    }
+    for (const sd of ['R', 'L']) { const p = V.state.tmj.poles[sd]; if (p) extra.push([`${t('rep_condyle_axis')} · ${t(sd === 'R' ? 'atm_side_r' : 'atm_side_l')}`, Math.hypot(p.lat[0] - p.med[0], p.lat[1] - p.med[1], p.lat[2] - p.med[2]).toFixed(1) + ' mm']); }
+  }
+  const aw = V.airwayMesh();
+  if (aw && aw.airway) { extra.push([t('aw_vol'), (aw.airway.volume_mm3 / 1000).toFixed(1) + ' cm³']); extra.push([t('aw_mca'), aw.airway.mca_mm2.toFixed(0) + ' mm²']); }
+  return { list, extra };
+}
+
+/** Panorámica a alta resolución con sus medidas (canvas fuera de pantalla). */
+function panoFigureUrl() {
+  const pano = V.state.pano; if (!pano) return null;
+  const cv = document.createElement('canvas');
+  V.drawPanoramic(cv, pano.image, V.getPanoWindow(), Math.max(1, 1600 / pano.image.width));
+  drawMeasures(cv, V.getPanoMeas(), pano.image.step, cv.width / 800);
+  return cv.toDataURL('image/jpeg', 0.92);
+}
+
+/** Mosaico de ATM fuera de pantalla: por lado, 5 sagitales y (coronal, axial), con rótulos y medidas. */
+function atmFigureUrl() {
+  const tmj = V.state.tmj; if (!tmj) return null;
+  const W = 340, pad = 8, lbl = 34, sideW = 46;
+  const sides = ['R', 'L'].filter((sd) => tmj.series[sd]);
+  const rows = sides.length * 2;
+  const H = Math.round(W / tmj.aspect);
+  const out = document.createElement('canvas'); out.width = sideW + 5 * (W + pad) + pad; out.height = rows * (H + lbl + pad) + pad;
+  const g = out.getContext('2d'); g.fillStyle = '#0B0F1A'; g.fillRect(0, 0, out.width, out.height);
+  let row = 0;
+  for (const sd of sides) {
+    const serie = tmj.series[sd];
+    const lines = [serie.filter((x) => x.family === 'sag'), serie.filter((x) => x.family !== 'sag')];
+    const y0 = pad + row * (H + lbl + pad);
+    g.save(); g.translate(sideW / 2, y0 + (H + lbl + pad)); g.rotate(-Math.PI / 2); g.font = '800 30px Poppins, sans-serif'; g.fillStyle = '#22E0FF'; g.textAlign = 'center'; g.fillText(t(sd === 'R' ? 'atm_side_r' : 'atm_side_l'), 0, 0); g.restore();
+    lines.forEach((items, li) => {
+      items.forEach((it, i) => {
+        const x = sideW + pad + i * (W + pad), y = y0 + li * (H + lbl + pad);
+        const cv = document.createElement('canvas');
+        V.drawTmjSlice(cv, it.img, tmj.win, Math.max(1, W / it.img.w));
+        drawMeasures(cv, V.getTmjMeas(sd, it.family, it.off), it.img.step, cv.width / 400);
+        const k = Math.min(W / cv.width, H / cv.height), dw = cv.width * k, dh = cv.height * k;
+        g.fillStyle = '#000'; g.fillRect(x, y + lbl, W, H);
+        g.drawImage(cv, x + (W - dw) / 2, y + lbl + (H - dh) / 2, dw, dh);
+        g.font = '600 20px Poppins, sans-serif'; g.fillStyle = '#e6edf3'; g.textAlign = 'left'; g.fillText(atmLabel(it), x + 2, y + lbl - 9);
+      });
+    });
+    row += 2;
+  }
+  return out.toDataURL('image/jpeg', 0.9);
+}
+
+/**
+ * Página de VÍA AÉREA del informe (v0.8.5, petición de Manuel): vista lateral con cráneo, escáneres y piel al 40 % de
+ * opacidad (60 % de transparencia) y la vía aérea opaca con su mapa de calor; valores, norma adulta por sexo,
+ * desviación y referencia. Devuelve { url, rows, notes, ref, legend } y deja el visor como estaba.
+ */
+async function airwayReportSection(opts) {
+  const aw = V.airwayMesh(); if (!aw || !aw.airway) return null;
+  const a = aw.airway;
+  const prev = { layout, vol: V.state.render.visible, opacity: V.state.render.opacity, heat: aw.heat !== false, meshes: V.getMeshes().map((m) => [m.id, m.visible, m.opacity]) };
+  let url = null;
+  try {
+    if (layout !== 'vp3d') applyLayout('vp3d');
+    const skull = V.getMeshes().find((m) => m.seg && m.role === 'skull');
+    for (const m of V.getMeshes()) {
+      if (m.role === 'airway') { V.setMeshVisible(m.id, true); V.setMeshOpacity(m.id, 1); if (!m.heat) V.setAirwayHeat(m.id, true); }
+      else if (m.role === 'soft') V.setMeshVisible(m.id, false);       // v0.8.6: la piel tapa la vía aérea en la captura
+      else { V.setMeshVisible(m.id, true); V.setMeshOpacity(m.id, 0.4); }
+    }
+    // sin cráneo segmentado, el hueso lo pone el volumen (también al 40 %); con cráneo, el volumen sobra
+    V.setVolumeVisible(!skull); if (!skull) V.setOpacity(0.4);
+    V.setView('lat_r'); V.reset3D(); await settle(900);
+    url = opts.png ? await V.shot3DAlpha(1400) : null;
+    if (!url) { const u = await shotDomAsync($('.vp[data-id="vp3d"]'), false); if (u) url = await toJpeg(u, 0.88); }
+  } catch (e) { console.warn('vía aérea en el informe', e); }
+  // se deja todo como estaba
+  for (const [id, vis, op] of prev.meshes) { V.setMeshVisible(id, vis); V.setMeshOpacity(id, op); }
+  if (aw.heat !== prev.heat) V.setAirwayHeat(aw.id, prev.heat);
+  V.setVolumeVisible(prev.vol); V.setOpacity(prev.opacity); $('#dicom-vis').checked = !!prev.vol; syncRenderControls();
+  // tabla como la de la tarjeta (norma adulta por sexo; sin norma en pediatría o sin sexo)
+  const sex = current && current.sex, age = patientAge();
+  const pediatric = age != null && age < 18;
+  const rows = [];
+  for (const [label, val, which, unit, dec] of [[t('aw_vol'), a.volume_mm3 / 1000, 'vol', 'cm³', 1], [t('aw_mca'), a.mca_mm2, 'mca', 'mm²', 0]]) {
+    const norm = V.airwayNorm(which, sex);
+    let normTxt = t('aw_no_norm'), devTxt = t('aw_no_norm'), cls = null;
+    if (norm && !pediatric) {
+      const [mean, sd] = norm; const dev = val - mean, z = sd ? dev / sd : 0;
+      normTxt = `${mean.toFixed(dec)} ± ${sd.toFixed(dec)} ${unit}`;
+      devTxt = `${dev >= 0 ? '+' : ''}${dev.toFixed(1)} ${unit} (${z >= 0 ? '+' : ''}${z.toFixed(1)} DE)`;
+      cls = V.airwayClassify(val, which, sex);
+    }
+    rows.push({ label, value: `${val.toFixed(dec)} ${unit}`, norm: normTxt, dev: devTxt, cls });
+  }
+  const notes = pediatric ? t('aw_pediatric', { a: Math.floor(age) }) : (!V.airwayNorm('vol', sex) ? t('aw_no_sex') : '');
+  const [lo, hi] = aw.heatRange || [a.mca_mm2, a.mca_mm2 * 3];
+  const legend = { lo, hi, colors: Array.from({ length: 24 }, (_, i) => { const c = V.heatColorAt(i / 23); return [c[0], c[1], c[2]]; }) };
+  return { url, rows, notes, ref: t('aw_ref'), legend, title: t('aw_values_title'), extent: `${t('rep_aw_extent')}: ${Math.abs(a.z_hi - a.z_lo).toFixed(0)} mm` };
+}
+
+/** Genera el informe: capturas (cambiando al 2×2 el tiempo justo), medidas, datos y observaciones → pestaña imprimible. */
+async function generateReport(opts) {
+  if (busy) return;
+  busy = true;
+  setStatus(t('st_rep_building'));
+  const prog = busyModal(t('st_rep_title'));
+  prog.text(t('st_rep_building'));
+  const figures = [];
+  const prevLayout = layout;
+  const vp3 = V.getEngine().getViewport(V.VP.v3d);
+  const cam0 = vp3 ? vp3.getCamera() : null;
+  try {
+    // v0.8.5: el render 3D va como PNG sin fondo (rp-png); los cortes, en JPEG
+    const cap = async (id, title, wide) => {
+      if (id === 'vp3d' && opts.png) { const png = await V.shot3DAlpha(1400); if (png) { figures.push({ title, url: png, wide, png: true }); return; } }
+      const url = await shotDomAsync($(`.vp[data-id="${id}"]`), false); if (url) figures.push({ title, url: await toJpeg(url, 0.88), wide });
+    };
+    if (opts.v3d || opts.mpr) {
+      if (layout !== 'quad') applyLayout('quad');
+      await settle(900);
+      prog.text(t('st_rep_shots'));
+      if (opts.v3d) await cap('vp3d', t('vp_3d'));
+      if (opts.mpr && current) {
+        const sil = V.state.silhouettes;
+        V.suspendCrosshairs(true); if (sil) V.setSilhouettes(false); await settle(150);   // ni cruz ni siluetas en el informe; las medidas (SVG) sí
+        try { await cap('vpAx', t('vp_axial')); await cap('vpCor', t('vp_coronal')); await cap('vpSag', t('vp_sagittal')); } finally { V.suspendCrosshairs(false); if (sil) V.setSilhouettes(true); }
+      }
+    }
+    // vistas AMPLIADAS del render (frontal, derecha, izquierda): con el 3D a pantalla completa (v0.8.2)
+    if (opts.views) {
+      if (layout !== 'vp3d') applyLayout('vp3d');
+      await settle(700);
+      for (const [v, key] of [['frontal', 'view_frontal'], ['lat_r', 'view_lat_r'], ['lat_l', 'view_lat_l']]) {
+        V.setView(v); await settle(600);
+        await cap('vp3d', `${t('vp_3d')} · ${t(key)}`, true);
+      }
+    }
+    if (opts.pano && current) {
+      // v0.8.4: se puede pedir aunque no se haya abierto la panorámica: se calcula aquí (curva automática)
+      if (!V.state.pano) { prog.text(t('st_pan_building')); setStatus(t('st_pan_building')); try { await V.buildPano({ thickness: +$('#pan-thick').value, mip: $('#pan-mip').checked }, alignStatus); } catch (e) { console.warn('panorámica para el informe', e); } setStatus(t('st_rep_building')); }
+      const url = panoFigureUrl(); if (url) figures.push({ title: t('rep_opt_pano'), url, wide: true });
+    }
+    // TeleRx LATERAL y FRONTAL, en radiografía Y en MIP (v0.8.4; en v0.8.3 el MIP solo si se estaba viendo)
+    if (opts.tele && current) {
+      prog.text(t('st_rep_tele'));
+      for (const v of ['lat', 'pa']) for (const m of ['ray', 'mip']) { const u = await teleFigureFor(v, m); if (u) figures.push({ title: `${teleName(v)} · ${t(m === 'ray' ? 'tele_ray' : 'tele_mip')}`, url: u, wide: true }); }
+    }
+    if (opts.atm && V.state.tmj) { const url = atmFigureUrl(); if (url) figures.push({ title: t('rep_opt_atm'), url, wide: true }); }
+    if (opts.airway) prog.text(t('rep_opt_airway'));
+    const airway = opts.airway && V.airwayMesh() && V.airwayMesh().airway ? await airwayReportSection(opts) : null;
+    if (layout !== prevLayout) { applyLayout(prevLayout); await settle(300); }
+    if (cam0 && vp3) { try { vp3.setCamera(cam0); vp3.render(); } catch (e) { /* nada */ } }
+    const s = current;
+    const yrs = patientAge();
+    const patient = opts.patient && s ? [[t('rep_patient'), s.patient || '—'], [t('pat_sex'), s.sex || '—'], [t('pat_birth'), s.birth ? fmtDate(s.birth) + (yrs != null && yrs > 0 && yrs < 120 ? ` (${t('age_years', { n: Math.floor(yrs) })})` : '') : '—']] : null;
+    const series = s ? [[t('rep_study_date'), s.date ? fmtDate(s.date) : '—'], [t('rep_series'), `${s.desc || s.modality || 'CBCT'} · ${s.count} ${t('slices')} · ${s.cols}×${s.rows}`],
+      [t('rep_voxel'), s.spacing ? `${(+s.spacing[0]).toFixed(2)} × ${(+s.spacing[1]).toFixed(2)} × ${(+s.dz).toFixed(2)} mm` : '—']] : [[t('rep_series'), t('rep_no_volume')]];
+    const meas = opts.meas ? reportMeasures() : { list: [], extra: [] };
+    let logo = null;
+    const dark = opts.theme === 'dark';
+    try { logo = await toJpeg(new URL(dark ? './img/logo_main_dark.png' : './img/logo_main_light.png', document.baseURI).href, 0.92, dark ? '#0B0F1A' : '#fff'); } catch (e) { /* sin logotipo */ }
+    const now = new Date();
+    const when = now.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' + now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const data = { patient, series, figures, measures: meas.list, extra: meas.extra, notes: opts.notes, logo, when, theme: dark ? 'dark' : 'light', airway };
+    const who = (s && s.patient && opts.patient ? s.patient : 'caso').replace(/[^\w\-]+/g, '_').slice(0, 30);
+    const stem = `tresD_informe_${who}_${now.toISOString().slice(0, 16).replace(/[:T]/g, '-')}`;
+    if (opts.format !== 'pptx') { prog.text(t('st_rep_pdf')); const doc = buildReportPdf(data); doc.save(stem + '.pdf'); }
+    if (opts.format === 'pptx' || opts.format === 'both') {
+      // v0.8.6: dos descargas seguidas las bloquea el navegador («descargar varios archivos»): se separan en el
+      // tiempo y el .pptx se descarga con el MISMO método que la sesión y el paquete (Blob + enlace)
+      if (opts.format === 'both') await new Promise((r) => setTimeout(r, 1200));
+      prog.text(t('st_rep_pptx')); setStatus(t('st_rep_pptx'));
+      const { buildReportPptx } = await import('./ui/reportPptx.js');
+      const blob = await buildReportPptx(data);
+      download(blob, stem + '.pptx');
+    }
+    setStatus(t('st_rep_done'));
+    countEvent('informe');
+  } catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); if (layout !== prevLayout) applyLayout(prevLayout); }
+  prog.close();
+  busy = false;
+}
+
+// ------------------------------------------------------------------ SESIÓN .tresd (v0.8.0)
+// JSON con todo lo que el usuario ha hecho sobre el CBCT (render, ventanas, medidas, panorámica, polos de
+// ATM, vía aérea, segmentación, colocación de los escáneres, datos editados del paciente). Los DICOM, los
+// escáneres y la foto NO van dentro (privacidad y tamaño): al abrir la sesión hay que volver a cargar el CBCT
+// (y los escáneres, que se colocan solos donde estaban).
+let pendingSession = null;      // sesión leída antes de tener el CBCT: se aplica al cargarlo
+let pendingMeshes = {};         // escáneres de la sesión pendientes de reimportar: nombre → { role, M, … }
+
+function buildSession() {
+  const s = current;
+  const aw = V.airwayMesh();
+  const tmj = V.state.tmj, pano = V.state.pano;
+  const meshes = V.getMeshes().filter((m) => !m.seg && m.role !== 'airway');
+  const seg = V.getMeshes().filter((m) => m.seg && m.role !== 'airway');
+  return {
+    app: 'tresD DICOM', format: 1, version: VERSION, saved: new Date().toISOString(),
+    series: s ? { key: s.key, desc: s.desc || '', count: s.count, rows: s.rows, cols: s.cols } : null,
+    patient: s ? { patient: s.patient || '', sex: s.sex || '', birth: s.birth || '' } : null,
+    chipHidden, layout,
+    render: { ...V.state.render }, mprWindow: V.getMprWindow(), cut: { ...V.state.cut }, silhouettes: V.state.silhouettes, showArch: V.state.showArch,
+    measures: { v3d: V.getMeasures3D(), mpr: V.getMprAnnotations() },
+    pano: pano ? { control: V.getPanoControl(), z: pano.curve.z, thickness: pano.thickness, mip: pano.mip, win: V.getPanoWindow(), meas: V.getPanoMeas() } : null,
+    tele: V.state.tele && V.state.tele.image ? { view: V.state.tele.view, mode: V.state.tele.mode, tilt: V.state.tele.tilt, win: V.getTeleWindows(), meas: V.getAllTeleMeas() } : null,
+    tmj: tmj ? { poles: Object.fromEntries(['R', 'L'].filter((sd) => tmj.poles[sd]).map((sd) => [sd, { med: tmj.poles[sd].med, lat: tmj.poles[sd].lat }])), shift: tmj.shift, meas: V.getAllTmjMeas(), win: V.getTmjWindow(), aspect: tmj.aspect, midX: tmj.midX } : null,
+    airway: aw && aw.airway ? { sup: aw.airway.sup, inf: aw.airway.inf, visible: aw.visible, opacity: aw.opacity, heat: aw.heat !== false } : null,
+    seg: seg.length ? Object.fromEntries(seg.map((m) => [m.role, { visible: m.visible, opacity: m.opacity, color: m.color }])) : null,
+    meshes: meshes.map((m) => ({ name: m.name, role: m.role, M: m.M ? Array.from(m.M) : null, align: m.align || null, color: m.color, opacity: m.opacity, visible: m.visible, scale: m.scale || 1 })),
+    photo: V.drapeExport(),      // v0.8.4: recorte de la cara + pose: se vuelve a proyectar sobre la piel al abrir
+    orient: V.getOrient(),       // v0.8.6: cómo se ha enderezado la cabeza
+  };
+}
+function saveSession() {
+  if (!V.hasCase()) return;
+  const data = buildSession();
+  const who = (current && current.patient ? current.patient : 'caso').replace(/[^\w\-]+/g, '_').slice(0, 30);
+  download(new Blob([JSON.stringify(data)], { type: 'application/json' }), `tresD_${who}_${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.tresd`);
+  setStatus(t('st_sess_saved'));
+}
+// ------------------------------------------------------------------ COMPARTIR CASO (.tresdz, v0.8.3)
+/** Ventana: anonimizar (por defecto sí), resolución reducida (por defecto sí), incluir escáneres. */
+function shareDialog() {
+  if (!current) return;
+  const nMesh = V.getMeshes().filter((m) => !m.seg && m.role !== 'airway').length;
+  const soft = V.softMesh(), hasPhoto = !!(soft && soft.drape);
+  const dims = current ? [current.cols, current.rows, current.count] : [0, 0, 0];
+  const mb = (f) => Math.round((dims[0] * dims[1] * dims[2] * 2) / (f * f * f) / 2 / 1e6);   // ≈ la mitad tras el ZIP
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  const chk = (id, key, on, dis, hint) => `<label class="chk"><input type="checkbox" id="${id}"${on ? ' checked' : ''}${dis ? ' disabled' : ''}><span>${t(key)}${hint ? ` <small class="muted">${hint}</small>` : ''}</span></label>`;
+  bg.innerHTML = `<div class="modal share"><h3>${t('share_title')}</h3><div class="hint">${t('share_hint')}</div>
+    <div class="rep-opts one">
+      ${chk('sh-anon', 'share_anon', true, false, '')}
+      ${chk('sh-reduce', 'share_reduce', true, false, `≈ ${mb(Math.cbrt(4))} MB`)}
+      ${chk('sh-mesh', 'share_meshes', nMesh > 0, nMesh === 0, nMesh ? `(${nMesh})` : '')}
+      ${chk('sh-photo', 'share_photo', false, !hasPhoto, '')}
+    </div>
+    <div class="hint small">${t('share_legal')}</div>
+    <div class="mrow"><button class="btn-ghost" id="dlg-cancel">${t('dlg_cancel')}</button>
+    <button class="btn-primary" style="width:auto;min-height:40px;padding:8px 22px" id="dlg-ok">${t('share_go')}</button></div></div>`;
+  bg.querySelector('#dlg-cancel').addEventListener('click', () => bg.remove());
+  bg.addEventListener('click', (e) => { if (e.target === bg) bg.remove(); });
+  // la foto identifica al paciente: se propone solo cuando NO se anonimiza (y siempre se puede cambiar a mano)
+  const anonBox = bg.querySelector('#sh-anon'), photoBox = bg.querySelector('#sh-photo');
+  if (hasPhoto) { photoBox.checked = !anonBox.checked; anonBox.addEventListener('change', () => { photoBox.checked = !anonBox.checked; }); }
+  bg.querySelector('#dlg-ok').addEventListener('click', async () => {
+    const opts = { anonymize: anonBox.checked, reduce: bg.querySelector('#sh-reduce').checked, meshes: bg.querySelector('#sh-mesh').checked, photo: hasPhoto && photoBox.checked };
+    bg.remove();
+    await buildPackage(opts);
+  });
+  document.body.appendChild(bg);
+}
+/** Escribe el CBCT como DICOM (completo o reducido, anónimo o no), los escáneres como STL y la sesión, y lo comprime. */
+async function buildPackage(opts) {
+  if (busy) return;
+  busy = true;
+  try {
+    const src = V.exportSource(); if (!src) return;
+    setStatus(t('st_share_dicom', { p: 0 })); setProgress(0);
+    const { files } = await volumeToDicom({ ...src, reduce: opts.reduce, anonymize: opts.anonymize, onProgress: (p) => { setStatus(t('st_share_dicom', { p: Math.round(p * 100) })); setProgress(Math.round(p * 100)); } });
+    const entries = { ...files };
+    const sess = buildSession();
+    if (opts.anonymize) { sess.patient = null; sess.chipHidden = false; }
+    sess.series = null;                                     // la serie del paquete tiene otro UID: sin aviso de «otra serie»
+    sess.meshes = [];
+    if (opts.meshes) {
+      for (const m of V.getMeshes().filter((x) => !x.seg && x.role !== 'airway')) {
+        // con color por vértice (escáner PLY/OBJ con textura) va como PLY, que lo conserva (v0.8.4); si no, STL
+        const ply = V.meshPLY(m.id), stl = ply ? null : V.meshSTL(m.id); if (!ply && !stl) continue;
+        entries[`escaneres/${m.name}.${ply ? 'ply' : 'stl'}`] = new Uint8Array((ply || stl).buf);
+        // ya va en su sitio: matriz identidad y sin reorientar al importarlo
+        sess.meshes.push({ name: m.name, role: m.role, M: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], align: m.align || null, color: m.color, opacity: m.opacity, visible: m.visible, scale: 1 });
+      }
+    }
+    // a resolución reducida cambian los píxeles de los cortes de ATM y de la telerx: esas medidas (en píxeles) no valen
+    if (opts.reduce) { if (sess.tmj) sess.tmj.meas = {}; if (sess.tele) sess.tele.meas = { lat: [], pa: [] }; }
+    if (!opts.photo) sess.photo = null;                     // la foto drapeada solo si se pide (v0.8.4)
+    sess.orient = null;                                     // v0.8.6: el DICOM del paquete ya sale enderezado
+    sess.packaged = { reduced: !!opts.reduce, anonymized: !!opts.anonymize, photo: !!opts.photo };
+    entries['sesion.tresd'] = new TextEncoder().encode(JSON.stringify(sess));
+    setStatus(t('st_share_zip')); setProgress(null);
+    await new Promise((r) => setTimeout(r, 30));
+    const out = await zipEntries(entries, 6);
+    const who = opts.anonymize ? 'anonimo' : (current.patient || 'caso').replace(/[^\w\-]+/g, '_').slice(0, 30);
+    download(new Blob([out], { type: 'application/zip' }), `tresD_caso_${who}_${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.tresdz`);
+    setStatus(t('st_share_done', { mb: (out.length / 1e6).toFixed(1) }));
+    countEvent('compartir');
+  } catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); }
+  setProgress(null);
+  busy = false;
+}
+
+async function loadSessionFile(file) {
+  let data;
+  try { data = JSON.parse(await file.text()); } catch (e) { setStatus(t('st_sess_bad')); return; }
+  if (!data || data.app !== 'tresD DICOM' || !data.format) { setStatus(t('st_sess_bad')); return; }
+  if (!current) { pendingSession = data; setStatus(t('st_sess_need_dicom', { n: data.series && data.series.desc ? data.series.desc : 'CBCT' })); return; }
+  await applySession(data);
+}
+/** Aplica una sesión sobre el CBCT cargado. Los pasos lentos (segmentación, vía aérea, panorámica, ATM) avisan en la barra de estado. */
+async function applySession(d) {
+  if (!current) return;
+  if (busy) { setTimeout(() => applySession(d), 500); return; }
+  busy = true;
+  const warn = d.series && d.series.key && current.key !== d.series.key;
+  // v0.8.4: cada bloque va por su cuenta: si uno falla (p. ej. la telerx) los demás (ATM, foto…) se restauran igual
+  const errors = [];
+  const step = async (name, fn) => { try { await fn(); } catch (e) { console.error('sesión: ' + name, e); errors.push(name); } };
+  try {
+    setStatus(t('st_sess_loading'));
+    if (d.patient) { current.patient = d.patient.patient || current.patient; current.sex = d.patient.sex ?? current.sex; current.birth = d.patient.birth || current.birth; updateSummaryPatient(current); }
+    chipHidden = !!d.chipHidden; renderChip();
+    // v0.8.6: la orientación va ANTES que nada (las mallas y las medidas de la sesión ya vienen en el marco girado)
+    if (d.orient && (d.orient.x || d.orient.y || d.orient.z)) await step('orientación', () => { V.setOrient(d.orient, { volumeOnly: true }); syncOrientControls(); });
+    await step('render', () => { if (d.render) { Object.assign(V.state.render, d.render); V.applyRender(); syncRenderControls(); $('#dicom-vis').checked = !!V.state.render.visible; } });
+    await step('ventana', () => { if (d.mprWindow) V.setMprWindow(d.mprWindow); });
+    if (typeof d.silhouettes === 'boolean') { $('#sil-vis').checked = d.silhouettes; V.setSilhouettes(d.silhouettes); }
+    await step('medidas', () => { if (d.measures) { if (d.measures.v3d) V.setMeasures3D(d.measures.v3d); if (d.measures.mpr) V.setMprAnnotations(d.measures.mpr); } });
+    if (d.seg && !V.softMesh()) {
+      await step('segmentación', async () => {
+        busy = false; const ok = await runSegmentation(); busy = true;
+        if (ok) for (const m of V.getMeshes().filter((x) => x.seg && x.role !== 'airway')) { const sv = d.seg[m.role]; if (!sv) continue; if (sv.color) V.setMeshColor(m.id, sv.color); if (Number.isFinite(sv.opacity)) setCardOpacity(m.id, sv.opacity); if (sv.visible === false) V.setMeshVisible(m.id, false); }
+        syncCards();
+      });
+    }
+    // foto drapeada (v0.8.4): recorte + pose guardados → se proyecta sobre la piel recién segmentada
+    if (d.photo && V.softMesh() && !V.softMesh().drape) {
+      await step('foto', async () => {
+        setStatus(t('st_photo_load'));
+        const res = await V.drapeImport(d.photo);
+        if (res) { refreshPhotoRow(); const soft = V.softMesh(); if (soft && d.seg && d.seg.soft && Number.isFinite(d.seg.soft.opacity)) setCardOpacity(soft.id, d.seg.soft.opacity); }
+      });
+    }
+    if (d.airway && d.airway.sup && d.airway.inf && !V.airwayMesh()) {
+      await step('vía aérea', async () => {
+        setProgress(0);
+        const item = await V.segmentAirway(d.airway.sup, d.airway.inf, (ph, p) => { awStatus(ph, p); if (ph === 'grid') setProgress(p); else setProgress(null); }, t('role_airway'));
+        setProgress(null);
+        if (item) { addMeshCard(item); syncCards(); if (Number.isFinite(d.airway.opacity)) setCardOpacity(item.id, d.airway.opacity); if (d.airway.visible === false) V.setMeshVisible(item.id, false); }
+      });
+    }
+    if (d.pano && d.pano.control && d.pano.control.length >= 3) {
+      await step('panorámica', async () => {
+        setStatus(t('st_pan_building'));
+        const curve = V.curveFromPoints(d.pano.control, d.pano.z);
+        if (curve) {
+          await V.buildPano({ curve, thickness: d.pano.thickness, mip: d.pano.mip }, alignStatus);
+          if (d.pano.win) V.setPanoWindow(d.pano.win);
+          V.setPanoMeas(d.pano.meas || []);
+          $('#pan-thick').value = d.pano.thickness; $('#pan-thick-val').textContent = d.pano.thickness + ' mm'; $('#pan-mip').checked = !!d.pano.mip;
+          $('#pan-curve').checked = !!d.showArch; V.setArchVisible(!!d.showArch);
+        }
+      });
+    }
+    if (d.tele && d.tele.view) {
+      await step('telerx', async () => {
+        await showTelerx({ view: d.tele.view, mode: d.tele.mode, tilt: +d.tele.tilt || 0, silent: true });
+        V.setTeleWindows(d.tele.win); V.setAllTeleMeas(d.tele.meas);
+        if (V.state.tele) drawTele();
+      });
+    }
+    if (d.tmj && d.tmj.poles) {
+      await step('ATM', async () => {
+        setStatus(t('st_atm_slices', { s: '' }));
+        await new Promise((r) => setTimeout(r, 20));
+        const res = V.restoreTmj(d.tmj, Number.isFinite(d.tmj.aspect) ? null : atmCellAspect());   // con la proporción guardada las medidas (en píxeles) siguen valiendo
+        if (res) { renderTmj(); }
+      });
+    }
+    pendingMeshes = {};
+    for (const m of d.meshes || []) if (m && m.name && m.M) pendingMeshes[m.name] = m;
+    setHasCase();
+    applyLayout(d.layout && d.layout !== 'panEdit' ? d.layout : 'quad');
+    if (layout === 'vpAtm') fitTmjAspect();
+    if (layout === 'vpPan' && V.state.pano) drawPan();
+    if (layout === 'vpTele' && V.state.tele) drawTele();
+    const missing = Object.keys(pendingMeshes);
+    setStatus((warn ? t('st_sess_other_series') + ' ' : '') + (missing.length ? t('st_sess_meshes', { n: missing.join(', ') }) : t('st_sess_loaded')) + (errors.length ? ' ' + t('st_sess_partial', { n: errors.join(', ') }) : ''));
+    countEvent('sesion');
+  } catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); }
+  busy = false;
 }
 
 // ------------------------------------------------------------------ paneles replegables y letra
@@ -178,6 +646,7 @@ function fontMenu(anchor) {
 
 // ------------------------------------------------------------------ estado
 function setStatus(msg) { const el = $('#status-text'); if (el) el.textContent = msg; }
+const statusText = () => { const el = $('#status-text'); return el ? el.textContent : ''; };
 function setProgress(p) {
   const box = $('#progress');
   if (p == null) { box.classList.add('hidden'); return; }
@@ -187,8 +656,9 @@ function setProgress(p) {
 /** Muestra u oculta la interfaz del caso. Con solo escáneres (sin CBCT) únicamente tiene sentido el visor 3D. */
 function setHasCase() {
   const vol = !!current, has = V.hasCase();
-  for (const sel of ['#btn-shot', '#btn-rotate', '#view-bar', '#wrap-right', '#g-tools', '#btn-undo', '#btn-redo', '#btn-new']) $(sel).classList.toggle('hidden', !has);
-  for (const sel of ['#patient-chip', '#btn-patient-edit', '#btn-meta', '#vispanel .card.dicom', '#mpr-card', '#btn-cross']) $(sel).classList.toggle('hidden', !vol);
+  for (const sel of ['#btn-shot', '#view-bar', '#wrap-right', '#g-tools', '#btn-undo', '#btn-redo', '#btn-new', '#btn-report', '#btn-save', '#btn-share']) $(sel).classList.toggle('hidden', !has);
+  for (const sel of ['#patient-chip', '#btn-patient-edit', '#btn-meta', '#vispanel .card.dicom', '#mpr-card']) $(sel).classList.toggle('hidden', !vol);
+  $('#btn-cross').classList.toggle('hidden', !vol || !CROSS_LAYOUTS.includes(layout));   // v0.8.3: solo con cortes MPR a la vista
   $('#grid').classList.toggle('hidden', !has);
   $('#main-drop').classList.toggle('hidden', has);
   $$('#view-bar [data-layout]').forEach((b) => { b.disabled = !vol && b.dataset.layout !== 'vp3d'; });
@@ -197,17 +667,29 @@ function setHasCase() {
   // (2 escáneres). Reaparecen al quitarlos con ✕.
   $('#g1').classList.toggle('hidden', vol);
   $('#g2').classList.toggle('hidden', V.getMeshes().filter((m) => !m.seg).length >= 2);
-  const soft = V.softMesh();
-  $('#g3').classList.toggle('hidden', !vol);
-  $('#btn-seg').classList.toggle('hidden', !!soft);
-  $('#btn-photo').classList.toggle('hidden', !!(soft && soft.drape));
-  $('#btn-airway').classList.toggle('hidden', !!V.airwayMesh());
-  $('#btn-atm').classList.toggle('hidden', !vol);
+  $('#btn-orient').classList.toggle('hidden', !vol);
+  if (!vol) { $('#orient-box').classList.add('hidden'); $('#btn-orient').setAttribute('aria-pressed', 'false'); for (const ax of ['x', 'y', 'z']) { const el = $(`#or-${ax}`); if (el) el.value = 0; } syncOrientLabels(); }
+  refreshImportGroups();
   $('#btn-export').classList.toggle('hidden', !V.getMeshes().length);
   $('#lay-atm').classList.toggle('hidden', !V.state.tmj);
   $$('#mesh-cards .m-align, #mesh-cards .m-points').forEach((b) => b.classList.toggle('hidden', !vol || b.closest('.card').dataset.seg === '1'));
   refreshHistoryButtons();
   if (has) applyLayout(vol ? layout : 'vp3d', vol);
+}
+
+/** Botones del grupo «3 · Piel y foto facial» (cada uno se oculta con su registro hecho) y títulos del panel (v0.8.4). */
+function refreshImportGroups() {
+  const vol = !!current, soft = V.softMesh();
+  $('#btn-seg').classList.toggle('hidden', !!soft);
+  $('#btn-photo').classList.toggle('hidden', !!(soft && soft.drape));
+  $('#btn-airway').classList.toggle('hidden', !!V.airwayMesh());
+  $('#btn-atm').classList.toggle('hidden', !vol || !!V.state.tmj);        // con los cortes ya calculados sobra el botón
+  // con piel y foto ya subidas sobra el título «3 · Piel y foto facial»; sin ningún botón, la caja entera;
+  // y sin nada que importar (CBCT, escáneres, piel, foto), el título «Importar»
+  const g3Done = !!soft && !!soft.drape;
+  $('#g3 .gtitle').classList.toggle('hidden', g3Done);
+  $('#g3').classList.toggle('hidden', !vol || ['#btn-photo', '#btn-seg', '#btn-airway', '#btn-atm'].every((sel) => $(sel).classList.contains('hidden')));
+  $('#side .phead .h1').classList.toggle('hidden', vol && $('#g2').classList.contains('hidden') && g3Done);
 }
 
 // ------------------------------------------------------------------ deshacer / rehacer
@@ -296,16 +778,19 @@ async function ingest(entries) {
   try {
     setProgress(0);
     setStatus(t('st_reading', { n: entries.length }));
-    entries = await expandZips(entries, () => setStatus(t('st_unzip')));
+    entries = await expandZips(entries, (k) => setStatus(t(k === 'unrar' ? 'st_unrar' : 'st_unzip')));
+    const sessEntries = entries.filter((e) => isSessionName(e.path));
     const meshEntries = entries.filter((e) => isMeshName(e.path));
     const photoEntries = entries.filter((e) => isPhotoName(e.path));
-    const rest = entries.filter((e) => !isMeshName(e.path) && !isPhotoName(e.path));
+    const rest = entries.filter((e) => !isMeshName(e.path) && !isPhotoName(e.path) && !isSessionName(e.path));
     if (rest.length) await ingestDicom(rest, meshEntries.length === 0 && photoEntries.length === 0);
+    // la sesión va ANTES de los escáneres (v0.8.3): en un paquete .tresdz ya dice dónde va cada uno
+    if (sessEntries.length) { busy = false; await loadSessionFile(sessEntries[0].file); busy = true; }
     if (meshEntries.length) await ingestMeshes(meshEntries);
     if (photoEntries.length) await ingestPhoto(photoEntries[0].file);
   } catch (e) {
-    console.error(e);
-    setStatus(t('st_error', { msg: e.message || e }));
+    if (e && e.archive) setStatus(t('st_archive_other', { k: e.archive.toUpperCase(), n: String(e.message).split(':').pop() }));   // RAR / 7z: aviso, no error
+    else { console.error(e); setStatus(t('st_error', { msg: e.message || e })); }
     setProgress(null);
   }
   busy = false;
@@ -314,7 +799,10 @@ async function ingest(entries) {
 async function ingestDicom(entries, reportEmpty) {
   const { series } = await scanDicom(entries, (i, n) => { setStatus(t('st_headers', { i, n })); setProgress((100 * i) / n); });
   if (!series.length) {
-    if (reportEmpty) setStatus(entries.length ? t('st_no_series') : t('st_no_dicom'));
+    // v0.8.5: se dice QUÉ se ha leído (para saber si el ZIP traía otra cosa)
+    const names = entries.slice(0, 3).map((e) => e.path.split('/').pop()).join(', ');
+    console.info('tresD: sin series DICOM entre', entries.length, 'archivos', entries.slice(0, 20).map((e) => e.path));
+    if (reportEmpty) setStatus((entries.length ? t('st_no_series') : t('st_no_dicom')) + (entries.length ? ' ' + t('st_files_seen', { n: entries.length, ex: names }) : ''));
     setProgress(null); return;
   }
   seriesList = series;
@@ -332,23 +820,41 @@ async function ingestMeshes(entries) {
   // la arcada SUPERIOR se importa (y alinea) primero; la inferior la sigue (misma oclusión)
   const rank = (e) => ({ upper: 0, other: 1, lower: 2 }[guessRole(e.file.name)] ?? 1);
   entries = [...entries].sort((a, b) => rank(a) - rank(b));
+  let added = 0;
   for (const e of entries) {
     setStatus(t('st_mesh_reading', { name: e.file.name })); setProgress(null);
     let mesh;
     try { mesh = await readMesh(e.file); } catch (err) { console.error(err); setStatus(t('st_mesh_error', { name: e.file.name, msg: err.message || err })); continue; }
-    const opts = await meshDialog(mesh);
+    // sesión restaurada (.tresd): si el escáner estaba en ella se coloca donde estaba, sin preguntar ni alinear
+    const saved = pendingMeshes[mesh.name.replace(/\.[^.]+$/, '')];
+    const opts = saved ? { role: saved.role, autoOrient: false, scale: saved.scale || 1 } : await meshDialog(mesh);
     if (!opts) { setStatus(t('st_ready')); continue; }
     setStatus(t('st_mesh_orienting', { name: mesh.name }));
     await new Promise((r) => setTimeout(r, 30));                 // deja pintar el estado antes del cálculo
     let item;
     try { item = await V.addMesh(mesh, { ...opts, onStatus: alignStatus }); } catch (err) { console.error(err); setStatus(t('st_mesh_error', { name: mesh.name, msg: err.message || err })); continue; }
+    item.scale = opts.scale || 1;
+    if (saved) {
+      V.applyMeshMatrix(item.id, saved.M, saved.align);
+      if (saved.color) V.setMeshColor(item.id, saved.color);
+      if (Number.isFinite(saved.opacity)) V.setMeshOpacity(item.id, saved.opacity);
+      if (saved.visible === false) V.setMeshVisible(item.id, false);
+      delete pendingMeshes[mesh.name.replace(/\.[^.]+$/, '')];
+    }
     const hadCase = $('#grid').classList.contains('hidden') === false;
     addMeshCard(item);
     setHasCase();
     if (!hadCase) resetCutUI();
     V.resize();
-    setStatus(meshSummary(item));
+    setStatus(saved ? t('st_sess_mesh_placed', { name: item.name }) : meshSummary(item));
     countEvent('escaner');
+    added++;
+  }
+  // v0.8.5 (petición de Manuel): al importar un escáner se ACTIVA la vista del render: si el visor 3D no estaba a la
+  // vista (un corte, la panorámica, la ATM…) se pasa al 3D a solas, y si el volumen estaba apagado se enciende
+  if (added && current) {
+    if (!vpShown('vp3d')) applyLayout('vp3d');
+    if (!V.state.render.visible) { V.setVolumeVisible(true); $('#dicom-vis').checked = true; }
   }
 }
 
@@ -459,7 +965,7 @@ function addMeshCard(item) {
     busy = true;
     // la SUPERIOR manda: si esta arcada es la inferior y tiene superior en su grupo, se alinea la superior y ella la sigue
     const master = item.role === 'lower' ? (V.getMeshes().find((m) => m.role === 'upper' && m.group === item.group) || item) : item;
-    try { const a = await V.alignMesh(master.id, alignStatus); setStatus(master.name + ': ' + alignText(a) + (master !== item ? ' · ' + t('st_align_follow_lower', { name: item.name }) : '')); }
+    try { const a = await V.alignMesh(master.id, alignStatus); setStatus(master.name + ': ' + alignText(a) + (master !== item ? ' · ' + t('st_align_follow_lower', { name: item.name }) : '')); showRenderWithMeshes(); }
     catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); }
     busy = false;
   });
@@ -617,6 +1123,9 @@ async function openSeries(s) {
   }
   chipHidden = false;
   renderChip();                        // chip de paciente (barra superior, como VOXEL)
+  if (pendingSession) { const sess = pendingSession; pendingSession = null; setTimeout(() => applySession(sess), 300); }
+  // deslizadores de corte (v0.8.2): arriba = superior (axial), anterior (coronal), izquierda del paciente (sagital)
+  for (const [id, ax, sign] of [[V.VP.ax, 2, 1], [V.VP.cor, 1, -1], [V.VP.sag, 0, 1]]) { const n = V.viewPlaneNormal(id); const sl = $(`.vp[data-id="${id}"] .vslice`); if (n && sl) sl.style.direction = n[ax] * sign > 0 ? 'rtl' : 'ltr'; }
   // sincronizar controles del panel derecho con el estado del render
   syncRenderControls();
   resetCutUI();
@@ -694,6 +1203,7 @@ function exportMeshesDialog() {
 
 // ------------------------------------------------------------------ Fase 3: segmentación rápida y foto facial
 const isPhotoName = (name) => /\.(jpe?g|png|webp|bmp)$/i.test(name || '');
+const isSessionName = (name) => /\.tresd$/i.test(name || '');
 
 function segStatus(phase, p) {
   if (phase === 'grid') setStatus(t('st_seg_grid', { p }));
@@ -706,7 +1216,12 @@ function segStatus(phase, p) {
 async function runSegmentation() {
   if (!current) { setStatus(t('st_need_dicom')); return false; }
   setProgress(0);
-  const res = await V.segmentQuick((ph, p) => { segStatus(ph, p); if (ph === 'grid') setProgress(p); else setProgress(null); }, { skull: t('role_skull'), soft: t('role_soft') });
+  const prog = busyModal(t('seg_btn'));      // v0.8.6: 20-30 s en equipos modestos
+  await new Promise((r) => setTimeout(r, 30));
+  let res = null;
+  try {
+    res = await V.segmentQuick((ph, p) => { segStatus(ph, p); prog.text(statusText()); prog.pct(ph === 'grid' ? p : null); if (ph === 'grid') setProgress(p); else setProgress(null); }, { skull: t('role_skull'), soft: t('role_soft') });
+  } finally { prog.close(); }
   setProgress(null);
   if (!res || !res.items.length) { setStatus(t('st_seg_fail')); setHasCase(); return false; }
   for (const it of res.items) addMeshCard(it);
@@ -743,7 +1258,11 @@ async function ingestPhoto(file) {
   // corte a solas) el render salía vacío y aparecía el marcado manual sin motivo (v0.7.14)
   if (!vpShown('vp3d')) { applyLayout('quad'); await new Promise((r) => setTimeout(r, 400)); }
   let res;
-  try { res = window.tresd.forceManual ? { fail: 'no_face_3d', lm2: null } : await V.drapePhoto(img, { onStatus: photoStatus }); } catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); return; }
+  const prog = busyModal(t('photo_btn'));        // v0.8.6: detección facial + drapeado, 20-30 s en equipos modestos
+  await new Promise((r) => setTimeout(r, 30));
+  try { res = window.tresd.forceManual ? { fail: 'no_face_3d', lm2: null } : await V.drapePhoto(img, { onStatus: (ph) => { photoStatus(ph); prog.text(statusText()); } }); }
+  catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); return; }
+  finally { prog.close(); }
   if (res && res.ok) { finishDrape(res); return; }
   // sin detección automática (en la piel 3D, en la foto o sin MediaPipe): registro manual por puntos
   if (res && (res.fail === 'no_face_3d' || res.fail === 'no_face_photo' || res.fail === 'mediapipe')) {
@@ -880,9 +1399,22 @@ function startPointAlign(item) {
   syncMeshVisBoxes();
   $('#grid').classList.add('measuring');
   $('#pa-bar').classList.remove('hidden');
-  V.reset3D();                      // encuadra SOLO el escáner (y recalcula los planos de recorte: si no, con
-  promptPointAlign();               // el volumen oculto el modelo podía verse cortado al acercar la rueda)
+  // encuadra SOLO el escáner y lo acerca (v0.8.3); se repite tras el cambio de disposición porque Cornerstone
+  // reencuadra la cámara al repartir el espacio (v0.7.15) y se comía el zoom
+  // v0.8.4: en vista DERECHA (petición de Manuel), tanto el escáner como después el CBCT
+  const fit = () => { if (pointAlign && pointAlign.phase === 'src') { V.setView('lat_r'); V.reset3D(); V.zoom3D(1.6); } };
+  fit(); setTimeout(fit, 450);
+  promptPointAlign();
   setStatus(t('st_pa_start'));
+}
+/** Deja el resultado de una alineación a la vista: render 3D con el CBCT y los escáneres encendidos (v0.8.6). */
+function showRenderWithMeshes() {
+  if (!current) return;
+  if (!vpShown('vp3d')) applyLayout('vp3d');
+  if (!V.state.render.visible) { V.setVolumeVisible(true); $('#dicom-vis').checked = true; }
+  for (const m of V.getMeshes()) if (!m.seg && m.role !== 'airway' && !m.visible) V.setMeshVisible(m.id, true);
+  syncMeshVisBoxes();
+  V.resize();
 }
 function syncMeshVisBoxes() {
   for (const m of V.getMeshes()) { const c = $(`#mesh-cards .card[data-mesh="${m.id}"] .m-vis`); if (c) c.checked = !!m.visible; }
@@ -900,7 +1432,9 @@ function paPhaseDst() {
   syncMeshVisBoxes();
   V.setVolumeVisible(true); $('#dicom-vis').checked = true;
   if (V.state.render.preset !== 'radio') { V.setPreset('radio'); syncRenderControls(); }
-  V.reset3D();
+  V.setView('lat_r'); V.reset3D();
+  // v0.8.3: el CBCT se ve de cerca y centrado en los dientes (la superficie dental ya detectada al alinear)
+  if (!V.focusTeeth3D()) V.zoom3D(2.2);
   setStatus(t('st_pa_dst'));
   promptPointAlign();
 }
@@ -954,8 +1488,65 @@ async function pointAlignPicked(canvasPos) {
     const a = await V.alignByPoints(item.id, src, dst, alignStatus);
     const q = a && a.err != null ? t('st_pa_quality', { e: a.err.toFixed(2), c: Math.round(100 * (a.cov || 0)) }) : t('st_pa_only');
     setStatus(a ? t('st_pa_done', { name: item.name, q }) : t('st_align_failed'));
+    if (a) showRenderWithMeshes();      // v0.8.6: al terminar de alinear se ve el resultado en el render
   } catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); }
   busy = false;
+}
+
+// ------------------------------------------------------------------ ORIENTAR EL VOLUMEN (v0.8.6)
+// Tres deslizadores enderezan la cabeza (los tres planos). Gira TODO el caso, así que los cortes, la panorámica,
+// la TeleRx y los cortes de ATM salen ya con el paciente derecho. Mientras se arrastra solo se gira la geometría
+// (barato); al soltar se rehacen la panorámica y los cortes de ATM, que sí cuestan.
+let orientTimer = 0, orientPending = null, orientLast = 0;
+const orientDeg = () => ({ x: +$('#or-x').value, y: +$('#or-y').value, z: +$('#or-z').value });
+function syncOrientLabels() {
+  for (const ax of ['x', 'y', 'z']) { const v = +$(`#or-${ax}`).value; $(`#or-${ax}-val`).textContent = (v > 0 ? '+' : '') + v.toFixed(1).replace(/\.0$/, '') + '°'; }
+}
+function applyOrientLive() {
+  if (!current) return;
+  syncOrientLabels();
+  // ACELERADOR, no espera (v0.8.6): con una espera, arrastrando sin parar no se veía nada hasta soltar. Ahora se
+  // gira en cuanto se mueve y como mucho cada 60 ms, así los cortes y el render siguen al deslizador en vivo.
+  const now = Date.now();
+  clearTimeout(orientTimer);
+  const run = () => { orientLast = Date.now(); const out = V.setOrient(orientDeg(), { live: true }); if (out) orientPending = out; };
+  if (now - orientLast >= 60) run();
+  else orientTimer = setTimeout(run, 60 - (now - orientLast));
+}
+/** Al soltar el deslizador: rehace lo que se calcula a partir de los cortes (panorámica, ATM, TeleRx). */
+async function finishOrient() {
+  clearTimeout(orientTimer); orientLast = 0;
+  const out = V.setOrient(orientDeg()) || orientPending;    // sin `live`: rehace siluetas y rejilla
+  orientPending = null;
+  if (!current || busy) return;
+  const d = orientDeg();
+  if (!out) { setStatus(t('st_orient_done', { x: d.x, y: d.y, z: d.z })); return; }
+  busy = true;
+  const prog = busyModal(t('or_title'));
+  try {
+    if (out.tmj && V.state.tmj) {
+      prog.text(t('st_atm_slices', { s: '' })); await new Promise((r) => setTimeout(r, 20));
+      const tmj = V.state.tmj;
+      const res = V.restoreTmj({ poles: tmj.poles, shift: tmj.shift, aspect: tmj.aspect, midX: tmj.midX, win: V.getTmjWindow(), meas: {} }, null);
+      if (res) renderTmj();
+    }
+    if (out.panoControl && out.panoControl.length >= 3) {
+      prog.text(t('st_pan_building')); await new Promise((r) => setTimeout(r, 20));
+      const curve = V.curveFromPoints(out.panoControl, out.panoZ);
+      if (curve) { await V.buildPano({ curve, thickness: +$('#pan-thick').value, mip: $('#pan-mip').checked }, alignStatus); drawPan(); }
+    }
+    if (layout === 'vpTele') { prog.text(t('layout_tele')); await showTelerx({ silent: true }); }
+    setStatus(t('st_orient_done', { x: d.x, y: d.y, z: d.z }));
+  } catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); }
+  prog.close();
+  busy = false;
+  V.resize();
+}
+/** Coloca los deslizadores (sin disparar el giro): al cargar un caso o restaurar una sesión. */
+function syncOrientControls() {
+  const o = V.getOrient() || { x: 0, y: 0, z: 0 };
+  $('#or-x').value = o.x; $('#or-y').value = o.y; $('#or-z').value = o.z;
+  syncOrientLabels();
 }
 
 // ------------------------------------------------------------------ vía aérea (2 clics en el corte sagital, como VOXEL)
@@ -1210,6 +1801,7 @@ function renderTmj() {
   const tmj = V.state.tmj;
   box.innerHTML = '';
   $('#lay-atm').classList.toggle('hidden', !tmj);
+  refreshImportGroups();                                                 // v0.8.3/4: con los cortes ya calculados sobra el botón
   if (!tmj) return;
   const cell = (it) => {
     const d = document.createElement('div'); d.className = 'atm-cell';
@@ -1769,6 +2361,122 @@ function panControlAt(canvasPos) {
   return best;
 }
 
+// ------------------------------------------------------------------ telerradiografía simulada (v0.8.1)
+// Proyección del CBCT con rayos paralelos (núcleo en core/telerx.js): lateral / frontal, radiografía / MIP,
+// inclinación en 2D, brillo/contraste arrastrando y medidas por toques como en la panorámica.
+let teleBusy = false, teleTool = null, telePts = [], teleCur = null, teleMeasDrag = null;
+const teleName = (view) => `${t('layout_tele')} ${t(view === 'lat' ? 'tele_lat' : 'tele_pa').toLowerCase()}`;
+
+/** Calcula (una pasada por vista; el núcleo la guarda en caché) y pinta la telerx. opts = { view, mode, tilt, silent }. */
+async function showTelerx(opts = {}) {
+  if (!current || teleBusy) return null;
+  teleBusy = true;
+  let tele = null;
+  try {
+    const cached = V.state.tele && V.state.tele.cache[opts.view || V.state.tele.view];
+    if (!cached) setStatus(t('st_tele_building', { p: 0 }));
+    tele = await V.buildTele(opts, (p) => setStatus(t('st_tele_building', { p: Math.round(p * 100) })));
+    syncTeleControls();
+    drawTele();
+    if (tele && (!cached || !opts.silent)) setStatus(t('st_tele_done', { v: t(tele.view === 'lat' ? 'tele_lat' : 'tele_pa'), m: t(tele.mode === 'ray' ? 'tele_ray' : 'tele_mip'), w: (tele.image.width * tele.image.step).toFixed(0), h: (tele.image.height * tele.image.step).toFixed(0) }));
+  } catch (e) { console.error(e); setStatus(t('st_error', { msg: e.message || e })); }
+  teleBusy = false;
+  return tele;
+}
+function syncTeleControls() {
+  const tele = V.state.tele; if (!tele) return;
+  $('#tele-lat').setAttribute('aria-pressed', String(tele.view === 'lat')); $('#tele-pa').setAttribute('aria-pressed', String(tele.view === 'pa'));
+  $('#tele-ray').setAttribute('aria-pressed', String(tele.mode === 'ray')); $('#tele-mip').setAttribute('aria-pressed', String(tele.mode === 'mip'));
+  $('#tele-tilt').value = tele.tilt; $('#tele-tilt-val').textContent = (tele.tilt > 0 ? '+' : '') + tele.tilt + '°';
+  teleLetters();
+}
+/** Letras de orientación: lateral P / A (cara a la derecha); frontal D / I (se mira al paciente de frente). */
+function teleLetters() {
+  const ol = $('#tele-ol'); if (!ol) return;
+  const lat = !V.state.tele || V.state.tele.view === 'lat', en = getLang() === 'en';
+  ol.textContent = lat ? 'P' : (en ? 'R' : 'D'); $('#tele-or').textContent = lat ? 'A' : (en ? 'L' : 'I');
+}
+function drawTele() {
+  const tele = V.state.tele; if (!tele || !tele.image) return;
+  const cv = $('#tele-canvas'), img = tele.image;
+  V.drawTelerx(cv, img, V.getTeleWindow(), drawZoom(cv, img.width, img.height));
+  const list = V.getTeleMeas().slice();
+  if (teleMeasDrag && teleMeasDrag.mode === 'new' && teleMeasDrag.b) list.push({ a: teleMeasDrag.a, b: teleMeasDrag.b, color: teleMeasDrag.color, live: true });
+  const color = V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length];
+  if (telePts.length === 1) list.push({ a: telePts[0], b: teleCur || telePts[0], color, live: true, noLabel: teleTool === 'ang' });
+  else if (telePts.length === 2) list.push({ type: 'ang', a: telePts[0], v: telePts[1], b: teleCur || telePts[1], color, live: true });
+  drawMeasures(cv, list, img.step);
+  drawTeleRuler(cv, img);
+  $('#tele-clear').classList.toggle('hidden', !V.getTeleMeas().length);
+}
+/** Herramienta de medida de la telerx (null = brillo/contraste): «Distancia» 2 toques, «Ángulo» 3 toques. */
+function setTeleTool(tool) {
+  teleTool = tool; telePts = []; teleMeasDrag = null;
+  $('#tele-len').setAttribute('aria-pressed', String(tool === 'len'));
+  $('#tele-ang').setAttribute('aria-pressed', String(tool === 'ang'));
+  $('#tele-canvas').classList.toggle('measuring', !!tool);
+  drawTele();
+  setStatus(t(tool === 'len' ? 'st_tele_len' : tool === 'ang' ? 'st_tele_ang' : 'st_ready'));
+}
+function addTeleMeas(m) {
+  const view = V.state.tele.view;
+  V.addTeleMeas(m); atmMeasN++;
+  V.history.record({ label: 'tele_meas',
+    undo: () => { const l = V.state.tele && V.state.tele.meas[view]; if (l) { const i = l.indexOf(m); if (i >= 0) l.splice(i, 1); } drawTele(); },
+    redo: () => { if (V.state.tele) (V.state.tele.meas[view] || (V.state.tele.meas[view] = [])).push(m); drawTele(); } });
+  refreshHistoryButtons(); drawTele();
+  setStatus(t(m.type === 'ang' ? 'st_tele_meas_ang' : 'st_tele_meas', { v: measText(m, V.state.tele.image.step) }));
+}
+/**
+ * Telerx de una vista y modo concretos a alta resolución, con su inclinación, sus medidas y la regla (informe).
+ * Si esa vista aún no se ha calculado, se calcula (y se deja la vista/modo que había).
+ */
+async function teleFigureFor(view, mode) {
+  if (!current) return null;
+  const prev = V.state.tele && V.state.tele.image ? { view: V.state.tele.view, mode: V.state.tele.mode } : null;
+  if (!V.state.tele || !V.state.tele.cache[view]) { await V.buildTele({ view, mode }); if (prev) await V.buildTele(prev); else syncTeleControls(); }
+  const tele = V.state.tele; if (!tele || !tele.cache[view]) return null;
+  const base = tele.cache[view][mode] || tele.cache[view].ray;
+  const img = tele.tilt ? V.rotateTeleImage(base, tele.tilt) : base;
+  const cv = document.createElement('canvas');
+  V.drawTelerx(cv, img, tele.win[mode] || { lower: 0, upper: 1000 }, Math.max(1, 1400 / img.width));
+  drawMeasures(cv, tele.meas[view] || [], img.step, cv.width / 700);
+  drawTeleRuler(cv, img, cv.width / 700);
+  return cv.toDataURL('image/jpeg', 0.92);
+}
+/**
+ * REGLA de referencia para cefalometría 2D (v0.8.2): dos escalas de 50 mm (horizontal y vertical) en la esquina
+ * inferior izquierda, con marcas cada 5 mm (largas cada 10) y cifras. Va pintada sobre el canvas, así sale en
+ * la captura y en el informe. No gira con la inclinación (es la escala de la imagen, no de la anatomía).
+ */
+function drawTeleRuler(cv, img, f = 1) {
+  const g = cv.getContext('2d');
+  const z = cv._imgZoom || 1, pxmm = z / img.step;                 // píxeles de canvas por mm
+  const k = canvasScale(cv) * f;
+  const L = 50, margin = 4 * pxmm;
+  if (cv.width < (L + 12) * pxmm || cv.height < (L + 12) * pxmm) return;
+  const x0 = margin, y0 = cv.height - margin;
+  const col = '#FFD166', lw = 1.2 * k, fs = 10 * k;
+  g.save();
+  g.lineWidth = lw; g.strokeStyle = col; g.fillStyle = col;
+  g.font = `600 ${fs.toFixed(1)}px Poppins, sans-serif`;
+  g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 3 * k;
+  // ejes
+  g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0 + L * pxmm, y0); g.moveTo(x0, y0); g.lineTo(x0, y0 - L * pxmm); g.stroke();
+  for (let mm = 0; mm <= L; mm += 5) {
+    const big = mm % 10 === 0, len = (big ? 3 : 1.8) * pxmm;
+    g.beginPath(); g.moveTo(x0 + mm * pxmm, y0); g.lineTo(x0 + mm * pxmm, y0 - len); g.stroke();
+    g.beginPath(); g.moveTo(x0, y0 - mm * pxmm); g.lineTo(x0 + len, y0 - mm * pxmm); g.stroke();
+    if (big && mm) {
+      g.textAlign = 'center'; g.textBaseline = 'bottom'; g.fillText(String(mm), x0 + mm * pxmm, y0 - len - 2 * k);
+      g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(String(mm), x0 + len + 3 * k, y0 - mm * pxmm);
+    }
+  }
+  g.textAlign = 'left'; g.textBaseline = 'top';
+  g.fillText('mm · 1:1', x0 + 3 * k, y0 + 3 * k > cv.height - fs ? y0 - 3 * pxmm - fs : y0 + 2 * k);
+  g.restore();
+}
+
 // ------------------------------------------------------------------ disposición (multipantalla)
 function applyLayout(name, remember = true) {
   if (name === 'vpAtm' && !V.state.tmj) name = 'quad';      // sin cortes de ATM calculados no hay nada que enseñar
@@ -1782,12 +2490,18 @@ function applyLayout(name, remember = true) {
   else if (name === 'row') grid.dataset.layout = 'row';
   else if (name === 'panEdit') { grid.dataset.layout = 'pair'; visible = ['vpAx', 'vpPan']; }   // editar la curva
   else { grid.dataset.layout = 'single'; visible = [name]; }
-  for (const id of [...all, 'vpPan', 'vpAtm']) grid.querySelector(`.vp[data-id="${id}"]`).classList.toggle('hidden', !visible.includes(id));
-  $('#btn-cross').disabled = ['vp3d', 'vpPan', 'panEdit', 'vpAtm'].includes(name);    // sin cortes MPR no hay cruz (v0.7.12)
+  for (const id of [...all, 'vpPan', 'vpTele', 'vpAtm']) grid.querySelector(`.vp[data-id="${id}"]`).classList.toggle('hidden', !visible.includes(id));
+  $('#btn-cross').disabled = !CROSS_LAYOUTS.includes(name);    // sin cortes MPR no hay cruz (v0.7.12)
+  $('#btn-cross').classList.toggle('hidden', !current || !CROSS_LAYOUTS.includes(name));   // v0.8.3: y además se esconde
+  // v0.8.3: los botones de vista (Frontal…, Centrar, Rotación) solo cuando el render 3D está a la vista
+  const show3d = visible.includes('vp3d');
+  $$('#view-bar [data-view], #btn-center, #btn-rotate').forEach((b) => b.classList.toggle('hidden', !show3d));
+  if (!show3d && rotTimer) { clearInterval(rotTimer); rotTimer = null; $('#btn-rotate').setAttribute('aria-pressed', 'false'); }
   $$('[data-layout]').forEach((b) => { if (b.tagName === 'BUTTON') b.classList.toggle('on', b.dataset.layout === (name === 'panEdit' ? 'vpPan' : name)); });
   requestAnimationFrame(() => V.resize());
   if (name === 'vpPan' || name === 'panEdit') { if (V.state.pano) drawPan(); else showPanoramic(); }   // ya calculada: solo repintar
   if (name === 'vpAtm') requestAnimationFrame(() => fitTmjAspect());
+  if (name === 'vpTele') { if (V.state.tele && V.state.tele.image) drawTele(); else showTelerx(); }   // v0.8.1: se calcula la primera vez
 }
 
 function toggleMaximize(id) {
@@ -1815,6 +2529,7 @@ const vpShown = (id) => !$(`.vp[data-id="${id}"]`).classList.contains('hidden');
 function shotPng() {
   if (vpShown('vpAtm')) return shotDom($('#atm-grid'));
   if (vpShown('vpPan')) return shotDom($('.vp[data-id="vpPan"] .pan-wrap'));
+  if (vpShown('vpTele')) return shotDom($('.vp[data-id="vpTele"] .pan-wrap'));
   // 2×2 y demás disposiciones: también por lo que se VE. `viewer.screenshot` pegaba cada canvas a su tamaño
   // interno y el del render 3D no tiene el mismo que los de los cortes: en la captura salían los cortes
   // pequeños en una esquina (v0.7.15). Así además entran las siluetas de las mallas.
@@ -1825,7 +2540,33 @@ function shotPng() {
  * Compone en un PNG los canvas (y los rótulos) que hay dentro de un trozo de la interfaz, cada uno en el
  * sitio y el tamaño en que se ve (los canvas van con `object-fit: contain`).
  */
-function shotDom(root) {
+function shotDom(root, wm = true) {
+  const c = composeDom(root); if (!c) return null;
+  if (wm) V.stampWatermark(c.out, watermark());
+  return c.out.toDataURL('image/png');
+}
+/**
+ * Como shotDom pero además pinta las capas SVG de Cornerstone (las medidas de los cortes MPR van en SVG, no
+ * en el canvas), que exigen pasar por una imagen: por eso es asíncrona. La usa el informe (v0.8.0).
+ */
+async function shotDomAsync(root, wm = true) {
+  const c = composeDom(root); if (!c) return null;
+  const { out, g, s, r0 } = c;
+  for (const svg of root.querySelectorAll('svg')) {
+    const r = svg.getBoundingClientRect(); if (!r.width || !r.height || !svg.childElementCount) continue;
+    try {
+      const cl = svg.cloneNode(true);
+      cl.setAttribute('xmlns', 'http://www.w3.org/2000/svg'); cl.setAttribute('width', r.width); cl.setAttribute('height', r.height);
+      const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(cl)], { type: 'image/svg+xml;charset=utf-8' }));
+      const img = new Image(); img.src = url; await img.decode();
+      g.drawImage(img, (r.left - r0.left) * s, (r.top - r0.top) * s, r.width * s, r.height * s);
+      URL.revokeObjectURL(url);
+    } catch (e) { console.warn('capa SVG', e); }
+  }
+  if (wm) V.stampWatermark(out, watermark());
+  return out.toDataURL('image/png');
+}
+function composeDom(root) {
   if (!root) return null;
   const r0 = root.getBoundingClientRect();
   if (!r0.width || !r0.height) return null;
@@ -1867,8 +2608,7 @@ function shotDom(root) {
       g.restore();
     }
   }
-  V.stampWatermark(out, watermark());
-  return out.toDataURL('image/png');
+  return { out, g, s, r0 };
 }
 
 // ------------------------------------------------------------------ panel derecho
@@ -2163,6 +2903,86 @@ function wireUI() {
     }
     if (!pdrag) return; const w0 = pdrag.w, w1 = V.getPanoWindow(); pdrag = null; if (Math.abs(w0.lower - w1.lower) > 0.5 || Math.abs(w0.upper - w1.upper) > 0.5) V.history.record({ label: 'mprwin', undo: () => { V.setPanoWindow(w0); drawPan(); }, redo: () => { V.setPanoWindow(w1); drawPan(); } }); };
   $('#pan-canvas').addEventListener('pointerup', pend); $('#pan-canvas').addEventListener('pointercancel', pend);
+  // telerradiografía (v0.8.1): vista, modo, inclinación (con deshacer), medidas por toques y brillo/contraste arrastrando
+  $('#tele-lat').addEventListener('click', () => showTelerx({ view: 'lat' }));
+  $('#tele-pa').addEventListener('click', () => showTelerx({ view: 'pa' }));
+  $('#tele-ray').addEventListener('click', () => showTelerx({ mode: 'ray' }));
+  $('#tele-mip').addEventListener('click', () => showTelerx({ mode: 'mip' }));
+  let tilt0 = null;
+  $('#tele-tilt').addEventListener('input', (e) => {
+    const d = +e.target.value; $('#tele-tilt-val').textContent = (d > 0 ? '+' : '') + d + '°';
+    if (!V.state.tele) return;
+    if (tilt0 === null) tilt0 = V.state.tele.tilt;
+    V.setTeleTilt(d); drawTele();
+  });
+  $('#tele-tilt').addEventListener('change', () => {
+    if (!V.state.tele || tilt0 === null) return;
+    const a = tilt0, b = V.state.tele.tilt; tilt0 = null;
+    if (a === b) return;
+    const go = (v) => { if (V.state.tele) { V.setTeleTilt(v); syncTeleControls(); drawTele(); } };
+    V.history.record({ label: 'tele_tilt', undo: () => go(a), redo: () => go(b) });
+    refreshHistoryButtons();
+    setStatus(t('st_tele_tilt', { d: (b > 0 ? '+' : '') + b }));
+  });
+  $('#tele-canvas').addEventListener('dblclick', () => applyLayout('quad'));
+  $('#tele-len').addEventListener('click', () => setTeleTool(teleTool === 'len' ? null : 'len'));
+  $('#tele-ang').addEventListener('click', () => setTeleTool(teleTool === 'ang' ? null : 'ang'));
+  $('#tele-clear').addEventListener('click', () => {
+    const prev = V.getTeleMeas().slice(); if (!prev.length) return;
+    const view = V.state.tele.view;
+    V.clearTeleMeas(); drawTele();
+    V.history.record({ label: 'tele_meas_clear', undo: () => { if (V.state.tele) V.state.tele.meas[view] = prev; drawTele(); }, redo: () => { if (V.state.tele) V.state.tele.meas[view] = []; drawTele(); } });
+    refreshHistoryButtons(); setStatus(t('st_tele_meas_clear'));
+  });
+  let teleDrag = null;
+  $('#tele-canvas').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !V.state.tele || !V.state.tele.image) return;
+    const cv = $('#tele-canvas');
+    const p = atmPos(cv, e);
+    const lab = measAtLabel(V.getTeleMeas(), cv, p);
+    if (lab) teleMeasDrag = { mode: 'label', m: lab, p0: p, lab0: (lab.lab || [0, 0]).slice() };
+    else if (teleTool) teleMeasDrag = { mode: 'tap', p0: p, a: p, b: null, x: e.clientX, y: e.clientY, color: V.MEAS_COLORS[atmMeasN % V.MEAS_COLORS.length] };
+    if (teleMeasDrag) { cv.setPointerCapture(e.pointerId); e.preventDefault(); return; }
+    teleDrag = { x: e.clientX, y: e.clientY, w: V.getTeleWindow() }; cv.setPointerCapture(e.pointerId);
+  });
+  $('#tele-canvas').addEventListener('pointermove', (e) => {
+    if (!V.state.tele || !V.state.tele.image) return;
+    if (teleTool) { teleCur = atmPos($('#tele-canvas'), e); if (telePts.length && !teleMeasDrag) drawTele(); }
+    if (teleMeasDrag) {
+      const p = atmPos($('#tele-canvas'), e), d = teleMeasDrag;
+      if (d.mode === 'tap' && teleTool === 'len' && !telePts.length && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8) d.mode = 'new';
+      if (d.mode === 'label') d.m.lab = [d.lab0[0] + (p[0] - d.p0[0]), d.lab0[1] + (p[1] - d.p0[1])];
+      else if (d.mode === 'new') d.b = p;
+      drawTele();
+      return;
+    }
+    if (!teleDrag) return;
+    const w0 = teleDrag.w, ww = Math.max(20, (w0.upper - w0.lower) + (e.clientX - teleDrag.x) * 4), wl = (w0.upper + w0.lower) / 2 + (e.clientY - teleDrag.y) * 4;
+    V.setTeleWindow({ lower: wl - ww / 2, upper: wl + ww / 2 }); drawTele();
+  });
+  const teleEnd = (e) => {
+    if (teleMeasDrag) {
+      const d = teleMeasDrag; teleMeasDrag = null;
+      const step = V.state.tele.image.step;
+      if (d.mode === 'tap') {
+        if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8) { drawTele(); return; }
+        telePts.push(d.p0);
+        const need = teleTool === 'ang' ? 3 : 2;
+        if (telePts.length < need) { drawTele(); setStatus(t(teleTool === 'ang' ? (telePts.length === 1 ? 'st_pan_ang2' : 'st_pan_ang3') : 'st_pan_len2')); return; }
+        const pts = telePts; telePts = [];
+        if (teleTool === 'ang') addTeleMeas({ type: 'ang', a: pts[0], v: pts[1], b: pts[2], color: d.color, lab: [0, 0] });
+        else if (Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) * step >= 1) addTeleMeas({ a: pts[0], b: pts[1], color: d.color, lab: [0, 0] });
+        else drawTele();
+        return;
+      }
+      if (d.mode === 'label' || !d.b) { drawTele(); return; }
+      if (Math.hypot(d.b[0] - d.a[0], d.b[1] - d.a[1]) * step < 1) { drawTele(); return; }
+      addTeleMeas({ a: d.a, b: d.b, color: d.color, lab: [0, 0] });
+      return;
+    }
+    if (!teleDrag) return; const w0 = teleDrag.w, w1 = V.getTeleWindow(); teleDrag = null; if (Math.abs(w0.lower - w1.lower) > 0.5 || Math.abs(w0.upper - w1.upper) > 0.5) V.history.record({ label: 'mprwin', undo: () => { V.setTeleWindow(w0); drawTele(); }, redo: () => { V.setTeleWindow(w1); drawTele(); } });
+  };
+  $('#tele-canvas').addEventListener('pointerup', teleEnd); $('#tele-canvas').addEventListener('pointercancel', teleEnd);
   for (const id of ['#in-folder', '#in-files', '#in-zip', '#in-mesh']) {
     $(id).addEventListener('change', (e) => { const list = collectFromFileList(e.target.files); e.target.value = ''; if (list.length) ingest(list); });
   }
@@ -2172,6 +2992,25 @@ function wireUI() {
   $('#btn-center').addEventListener('click', () => V.centerAll());
   $$('#view-bar [data-layout]').forEach((b) => b.addEventListener('click', () => { if (panDraw) cancelPanDraw(true); if (panEdit && b.dataset.layout !== 'vpPan') setPanoEdit(false); applyLayout(b.dataset.layout); }));
   $$('.vpmax').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); toggleMaximize(b.dataset.max); }));
+  // deslizadores de corte en los MPR (v0.8.2): para tabletas y ratones sin rueda
+  $('#btn-orient').addEventListener('click', () => {
+    const box = $('#orient-box'), on = box.classList.toggle('hidden') === false;
+    $('#btn-orient').setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) { syncOrientControls(); setStatus(t('st_orient_tip')); }
+  });
+  for (const ax of ['x', 'y', 'z']) {
+    $(`#or-${ax}`).addEventListener('input', applyOrientLive);
+    $(`#or-${ax}`).addEventListener('change', finishOrient);
+  }
+  $('#or-reset').addEventListener('click', () => { for (const ax of ['x', 'y', 'z']) $(`#or-${ax}`).value = 0; syncOrientLabels(); finishOrient(); });
+  $$('.vslice').forEach((sl) => {
+    const id = sl.dataset.vp;
+    sl.addEventListener('pointerdown', () => { sl.dataset.drag = '1'; });
+    const end = () => { delete sl.dataset.drag; };
+    sl.addEventListener('pointerup', end); sl.addEventListener('pointercancel', end); sl.addEventListener('blur', end);
+    sl.addEventListener('input', () => V.setSliceIndex(id, +sl.value));
+    sl.addEventListener('dblclick', (e) => e.stopPropagation());
+  });
   $$('.vp .vplabel').forEach((l) => l.parentElement.addEventListener('dblclick', (e) => {
     if (e.target.closest('.cs') && !V.state.measureMode) toggleMaximize(l.parentElement.dataset.id);
   }));
@@ -2186,6 +3025,31 @@ function wireUI() {
   $('#btn-feedback').addEventListener('click', () => openFeedback());
   $('#patient-chip').addEventListener('click', () => { if (!current) return; chipHidden = !chipHidden; renderChip(); });
   $('#btn-new').addEventListener('click', newCaseDialog);
+  $('#btn-report').addEventListener('click', openReportDialog);
+  $('#btn-save').addEventListener('click', saveSession);
+  $('#btn-share').addEventListener('click', shareDialog);
+  $('#btn-open').addEventListener('click', () => $('#in-session').click());
+  // «📂 Abrir» acepta también un paquete .tresdz (o un ZIP): va por la ruta de importación normal (v0.8.4)
+  $('#in-session').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
+    // v0.8.5: se decide por el CONTENIDO, no por la extensión (un ZIP renombrado o «.ZIP » también entra)
+    const kind = /\.(tresdz|zip)$/i.test(f.name.trim()) ? 'zip' : (/\.rar$/i.test(f.name.trim()) ? 'rar' : await sniffArchive(f));
+    if (kind === 'zip' || kind === 'rar') ingest(collectFromFileList([f]));
+    else if (kind) setStatus(t('st_archive_other', { k: kind.toUpperCase(), n: f.name }));
+    else await loadSessionFile(f);
+  });
+  $('#drop-open').addEventListener('click', (e) => { e.stopPropagation(); $('#in-session').click(); });   // también un ZIP con el CBCT
+  $('#drop-folder').addEventListener('click', (e) => { e.stopPropagation(); $('#in-folder').click(); });
+  // v0.8.5: instalada como aplicación (manifest con file_handlers), Windows abre los .tresdz / .tresd con doble clic
+  if ('launchQueue' in window && window.launchQueue && window.launchQueue.setConsumer) {
+    window.launchQueue.setConsumer(async (params) => {
+      try {
+        const files = [];
+        for (const h of params.files || []) { try { files.push(await h.getFile()); } catch (e) { /* nada */ } }
+        if (files.length) ingest(files.map((f) => ({ file: f, path: f.name })));
+      } catch (e) { console.warn('launchQueue', e); }
+    });
+  }
   $('#btn-patient-edit').addEventListener('click', editPatientDialog);
   $('#btn-help').addEventListener('click', openHelp);
   $('#btn-shot').addEventListener('click', () => {
@@ -2257,7 +3121,7 @@ function wireUI() {
 
   // teclado: Escape cancela la medición / cierra metadatos; Ctrl+Z / Ctrl+Y (o Ctrl+Mayús+Z) deshacen / rehacen
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { if (V.state.measureMode) setMeasureMode(null); if (manualPick) { cancelManual(); setStatus(t('st_ready')); } if (pointAlign) cancelPointAlign(); if (airwayPick) cancelAirway(); if (tmjPick) cancelTmj(); if (panDraw) cancelPanDraw(); if (atmBig && atmBig.pts.length) { atmBig.pts = []; atmBigHint(); drawAtmBig(); } if (panPts.length) { panPts = []; drawPan(); } $('#meta-drawer').classList.remove('open'); }
+    if (e.key === 'Escape') { if (V.state.measureMode) setMeasureMode(null); if (manualPick) { cancelManual(); setStatus(t('st_ready')); } if (pointAlign) cancelPointAlign(); if (airwayPick) cancelAirway(); if (tmjPick) cancelTmj(); if (panDraw) cancelPanDraw(); if (atmBig && atmBig.pts.length) { atmBig.pts = []; atmBigHint(); drawAtmBig(); } if (panPts.length) { panPts = []; drawPan(); } if (telePts.length) { telePts = []; drawTele(); } $('#meta-drawer').classList.remove('open'); }
     const tag = (e.target && e.target.tagName) || '';
     if ((e.ctrlKey || e.metaKey) && !/INPUT|TEXTAREA|SELECT/.test(tag)) {
       const k = e.key.toLowerCase();
@@ -2283,5 +3147,5 @@ function countEvent(name) {
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-window.tresd = { V, renderTmj, redrawTmj, showPanoramic, fitTmjAspect, openAtmBig, openPolesDialog, shotPng, openFeedback, feedbackState };   // acceso desde la consola del navegador (depuración)
+window.tresd = { V, renderTmj, redrawTmj, showPanoramic, fitTmjAspect, openAtmBig, openPolesDialog, shotPng, openFeedback, feedbackState, buildSession };   // acceso desde la consola del navegador (depuración)
 main();

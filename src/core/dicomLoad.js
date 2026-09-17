@@ -7,7 +7,7 @@
 //      (SeriesInstanceUID, filas×columnas) y contar cortes; detectar multiframe.
 //   3) si hay un DICOMDIR, usarlo para etiquetar/limitar las series.
 import dicomParser from 'dicom-parser';
-import { unzip } from 'fflate';
+import { unzipSync } from 'fflate';
 
 const HEADER_BYTES = 64 * 1024;          // primer intento: 64 KB (cabeceras CT normales < 10 KB)
 const SKIP_EXT = /\.(zip|txt|pdf|jpe?g|png|xml|html?|ini|exe|dll|bmp|gif|json|csv|stl|ply|obj|md|doc|docx|xlsx|pptx|mp4|avi|mov|js|css)$/i;
@@ -46,21 +46,78 @@ export function collectFromFileList(list) {
   return Array.from(list || []).map((f) => ({ file: f, path: f.webkitRelativePath || f.name }));
 }
 
-/** Descomprime los .zip de la lista (fflate) y sustituye cada ZIP por sus archivos. */
-export async function expandZips(entries, onStatus) {
+/**
+ * Tipo de archivo comprimido por su FIRMA (v0.8.5): 'zip' (PK), 'rar', '7z', 'gz' o null. Así un ZIP con otra
+ * extensión (o sin ella, o «.ZIP » con espacio) se reconoce igual, y un RAR / 7z se explica en vez de fallar.
+ */
+export async function sniffArchive(file) {
+  try {
+    const b = new Uint8Array(await file.slice(0, 6).arrayBuffer());
+    if (b.length < 4) return null;
+    if (b[0] === 0x50 && b[1] === 0x4b && (b[2] === 3 || b[2] === 5 || b[2] === 7)) return 'zip';
+    if (b[0] === 0x52 && b[1] === 0x61 && b[2] === 0x72 && b[3] === 0x21) return 'rar';
+    if (b[0] === 0x37 && b[1] === 0x7a && b[2] === 0xbc && b[3] === 0xaf) return '7z';
+    if (b[0] === 0x1f && b[1] === 0x8b) return 'gz';
+  } catch (e) { /* nada */ }
+  return null;
+}
+const isZipName = (p) => /\.(zip|tresdz)$/i.test(String(p || '').trim());
+
+/** ZIP (File) → { nombre: Uint8Array } en un Worker (v0.8.5); si el Worker no arranca, en el hilo principal. */
+async function unzipFile(file) {
+  const buf = await file.arrayBuffer();
+  const viaWorker = () => new Promise((resolve, reject) => {
+    let w = null;
+    try { w = new Worker(new URL('./unzip.worker.js', import.meta.url), { type: 'module' }); } catch (e) { reject(e); return; }
+    w.onmessage = (ev) => { w.terminate(); if (ev.data && ev.data.error) reject(new Error(ev.data.error)); else resolve(ev.data.files || {}); };
+    w.onerror = (ev) => { w.terminate(); reject(new Error('worker: ' + ((ev && ev.message) || 'no disponible'))); };
+    w.postMessage(buf, [buf]);          // el buffer pasa al worker (sin copia); si falla, se vuelve a leer el archivo
+  });
+  try { return await viaWorker(); } catch (e) {
+    if (/Invalid|zip/i.test(String(e && e.message))) throw e;     // ZIP corrupto: no insistir
+    console.warn('unzip en worker falló; en el hilo principal', e);
+    return unzipSync(new Uint8Array(await file.arrayBuffer()));
+  }
+}
+
+/** RAR (File) → { nombre: Uint8Array } en un Worker con el unrar oficial en WebAssembly (v0.8.5). */
+function unrarFile(file) {
+  return new Promise((resolve, reject) => {
+    let w = null;
+    try { w = new Worker(new URL('./unrar.worker.js', import.meta.url), { type: 'module' }); } catch (e) { reject(e); return; }
+    w.onmessage = (ev) => { w.terminate(); if (ev.data && ev.data.error) reject(new Error('RAR: ' + ev.data.error)); else resolve(ev.data.files || {}); };
+    w.onerror = (ev) => { w.terminate(); reject(new Error('RAR: ' + ((ev && ev.message) || 'no disponible'))); };
+    file.arrayBuffer().then((buf) => w.postMessage(buf, [buf]), reject);
+  });
+}
+const isRarName = (p) => /\.rar$/i.test(String(p || '').trim());
+
+/**
+ * Descomprime los .zip / .tresdz / .rar de la lista y sustituye cada archivo comprimido por su contenido. v0.8.5: en
+ * un Worker (unzip.worker.js / unrar.worker.js), comprimido dentro de comprimido (hasta 2 niveles) y reconocimiento
+ * por la firma cuando la extensión no es la esperada.
+ */
+export async function expandZips(entries, onStatus, depth = 0) {
   const out = [];
+  let nested = false;
   for (const e of entries) {
-    if (!/\.zip$/i.test(e.path)) { out.push(e); continue; }
-    if (onStatus) onStatus('unzip');
-    const buf = new Uint8Array(await e.file.arrayBuffer());
-    const files = await new Promise((res, rej) => unzip(buf, (err, data) => (err ? rej(err) : res(data))));
+    let kind = isZipName(e.path) ? 'zip' : (isRarName(e.path) ? 'rar' : null);
+    // sin extensión conocida (o con otra): se mira la firma; un 7z / .gz se avisa (no se pueden abrir aquí)
+    if (!kind && !/\.(dcm|ima|dic|dicom|stl|ply|obj|jpe?g|png|webp|bmp|tresd|json|txt|xml|html?|pdf)$/i.test(e.path) && e.file.size > 64) {
+      kind = await sniffArchive(e.file);
+      if (kind && kind !== 'zip' && kind !== 'rar') { const err = new Error(`ARCHIVE:${kind}:${e.path.split('/').pop()}`); err.archive = kind; throw err; }
+    }
+    if (!kind) { out.push(e); continue; }
+    if (onStatus) onStatus(kind === 'rar' ? 'unrar' : 'unzip');
+    const files = kind === 'rar' ? await unrarFile(e.file) : await unzipFile(e.file);
     for (const [name, data] of Object.entries(files)) {
-      if (name.endsWith('/') || name.includes('__MACOSX') || /(^|\/)\./.test(name)) continue;
+      if (name.endsWith('/') || name.includes('__MACOSX') || /(^|\/)\./.test(name) || !data.length) continue;
       const base = name.split('/').pop();
-      out.push({ file: new File([data], base), path: e.path.replace(/\.zip$/i, '') + '/' + name });
+      if (isZipName(base) || isRarName(base)) nested = true;
+      out.push({ file: new File([data], base), path: e.path.replace(/\.(zip|tresdz|rar)$/i, '') + '/' + name });
     }
   }
-  return out;
+  return nested && depth < 2 ? expandZips(out, onStatus, depth + 1) : out;
 }
 
 function looksLikeDicomName(path) {

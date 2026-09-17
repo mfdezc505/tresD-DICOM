@@ -12,7 +12,7 @@ import vtkColorTransferFunction from '@kitware/vtk.js/Rendering/Core/ColorTransf
 import vtkPiecewiseFunction from '@kitware/vtk.js/Common/DataModel/PiecewiseFunction';
 import { otsu, autoThresholds } from './stats.js';
 
-export const PRESETS = ['default', 'ivory', 'natural', 'radio', 'gray', 'soft', 'airway'];
+export const PRESETS = ['default', 'ivory', 'natural', 'radio', 'gray', 'soft', 'airway', 'grid'];   // grid = nube de puntos (pointCloud.js, v0.8.3)
 
 // (fracción de la ventana, r, g, b) y (fracción, opacidad); gradiente = rampa lineal (mín/máx).
 // unitScale: factor sobre la distancia unidad de opacidad (< 1 = cada muestra del rayo pesa más → superficie

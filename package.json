@@ -1,6 +1,6 @@
 {
   "name": "tresd-dicom",
-  "version": "0.7.18",
+  "version": "0.8.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -20,7 +20,10 @@
     "dcmjs": "^0.52.0",
     "dicom-parser": "^1.8.21",
     "events": "^3.3.0",
-    "fflate": "^0.8.3"
+    "fflate": "^0.8.3",
+    "jspdf": "^4.2.1",
+    "node-unrar-js": "^2.0.2",
+    "pptxgenjs": "^4.0.1"
   },
   "devDependencies": {
     "playwright": "^1.56.0",

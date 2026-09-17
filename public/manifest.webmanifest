@@ -1,0 +1,23 @@
+{
+  "name": "tresD DICOM viewer",
+  "short_name": "tresD DICOM",
+  "description": "Visor gratuito de DICOM / CBCT en el navegador. Visualización y docencia.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0B0F1A",
+  "theme_color": "#0B0F1A",
+  "lang": "es",
+  "icons": [
+    { "src": "img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": { "application/x-tresd-package": [".tresdz"], "application/x-tresd-session": [".tresd"] },
+      "icons": [{ "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png" }],
+      "launch_type": "single-client"
+    }
+  ]
+}

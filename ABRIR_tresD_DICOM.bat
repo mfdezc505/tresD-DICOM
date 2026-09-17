@@ -13,9 +13,10 @@ if not exist %PY% set PY=python
 if not exist docs\index.html goto :nodocs
 
 echo Arrancando el servidor de tresD DICOM en http://localhost:8123/ ...
-start "tresD DICOM - servidor (no cerrar mientras uses el visor)" cmd /k %PY% -m http.server 8123 --directory docs --bind 127.0.0.1
+REM v0.8.4: servidor propio SIN cache (antes el navegador guardaba index.html y abria la version anterior)
+start "tresD DICOM - servidor (no cerrar mientras uses el visor)" cmd /k %PY% servidor_local.py
 timeout /t 2 /nobreak >nul
-start "" http://localhost:8123/
+start "" http://localhost:8123/?t=%RANDOM%%RANDOM%
 echo.
 echo Listo: el visor se abre en el navegador. Esta ventana se puede cerrar.
 echo Si el navegador dice "no se puede acceder", espera 3 segundos y pulsa F5.

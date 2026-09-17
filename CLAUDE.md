@@ -32,7 +32,21 @@ completa al alinear por puntos y «Terminar de editar» sobre el axial (v0.7.15)
 caso» con confirmación, distancia de ATM con dos toques, panorámica sin la etiqueta V·N y ventana de Ayuda por
 secciones (v0.7.16), medidas por toques también en la panorámica, polos del cóndilo en la sección axial más ancha,
 sagitales del lado derecho vistos desde su lado, requisitos en la ayuda y marca de agua opaca (v0.7.17), «Ajustar polos» que se abre solo tras marcar los cóndilos y
-captura PNG del corte de ATM ampliado con sus medidas (v0.7.18).
+captura PNG del corte de ATM ampliado con sus medidas (v0.7.18), INFORME imprimible («Guardar como PDF» del
+navegador) con capturas, medidas y observaciones, y SESIÓN .tresd que guarda y restaura todo lo hecho sobre el
+caso (v0.8.0), TELERRADIOGRAFÍA simulada (lateral / frontal, radiografía / MIP, escala 1:1, inclinación y medidas)
+proyectando el CBCT con rayos paralelos (v0.8.1), regla de 5 mm en la telerx, deslizadores de corte en los MPR,
+informe descargado como PDF (jsPDF) con el render ampliado y la telerx, y «Refinar alineación» (v0.8.2), polos del
+cóndilo en la sección más ancha bajo el espacio articular (método VOXEL), preset «Rejilla» (nube de puntos), «Compartir
+caso» (.tresdz: DICOM anonimizado y reducido + escáneres + sesión), PDF con tema claro/oscuro y TeleRx frontal, botones
+de vistas / Cruz / ATM según la disposición, zoom al alinear por puntos y 🏷️ Metadatos (v0.8.3), deslizadores del color
+de cada corte, Rejilla con la superficie en alambre, alineación por puntos en vista derecha, panorámica y TeleRx MIP en el
+PDF, títulos del panel que se ocultan, y paquete .tresdz con foto drapeada opcional, escáneres PLY con color, reducción
+1/4 y apertura desde «📂 Abrir» / pantalla inicial (v0.8.4), ZIP y RAR descomprimidos en un Worker (también comprimido dentro de comprimido),
+render a la vista al importar escáneres, render sin fondo (PNG) en el informe, página de vía aérea con mapa de calor y
+norma, informe también en PowerPoint (PptxGenJS) y app instalable que abre .tresdz / .tresd con doble clic (v0.8.5), ORIENTAR EL VOLUMEN en los tres planos (endereza la cabeza y con ella los cortes, la panorámica, la TeleRx y
+la ATM), deslizadores de corte bajo cada corte, informe en PowerPoint que sí se descarga, ventana de progreso en los
+procesos largos y render a la vista al terminar de alinear (v0.8.6).
 100% en el navegador: los DICOM y las fotos nunca salen del ordenador del usuario.
 **Uso previsto declarado (MDR/RGPD): NO es producto sanitario con marcado CE ni sirve para diagnosticar.**
 No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medidas y alineación son «orientativas».
@@ -44,7 +58,8 @@ No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medida
 - **Manuel NO tiene Node.js**: la web se construye en la nube (Claude ejecuta `npm run build`) y se
   escribe la carpeta `docs/` ya construida en su PC. GitHub Pages sirve `docs/` de la rama `main` en
   **https://tresddicom.com** (dominio propio; `public/CNAME` NO se borra).
-  Para probar en local: `ABRIR_tresD_DICOM.bat` (servidor Python del venv de VOXEL + navegador).
+  Para probar en local: `ABRIR_tresD_DICOM.bat` (servidor `servidor_local.py` con el Python del venv de VOXEL,
+  cabeceras no-store + URL con `?t=aleatorio` para que el navegador NO enseñe la versión anterior; v0.8.4).
 - **Versión en DOS sitios**: `package.json` ("version") y `src/version.js` (VERSION). Subirla en ambos.
 - Regla 1 de Manuel: antes de cambiar código, buscar TODOS los sitios que afectan al comportamiento
   (grep) y confirmar qué ruta gana; luego cambiar y subir versión.
@@ -56,20 +71,25 @@ No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medida
   `node tests/orient.mjs`, `node tests/meshes.mjs`, `node tests/align.mjs`, `node tests/legal.mjs`,
   `node tests/photo.mjs`, `node tests/align_node.mjs` (Node, dientes reales), `node tests/geom.mjs` (guarda de
   geometría), `node tests/wrap.mjs` (bloque de cortes fuera de sitio), `node tests/real.mjs`,
-  `node tests/features.mjs` (v0.7), `node tests/v071.mjs`, `node tests/v072.mjs`, `node tests/v073.mjs`, `node tests/v074.mjs`, `node tests/v075.mjs`, `node tests/v076.mjs`, `node tests/v077.mjs`, `node tests/v078.mjs`, `node tests/v0711.mjs`, `node tests/v0712.mjs`, `node tests/v0713.mjs`, `node tests/v0714.mjs`, `node tests/v0715.mjs`, `node tests/v0716.mjs`, `node tests/v0717.mjs` y `node tests/v0718.mjs` hasta 0 errores.
+  `node tests/features.mjs` (v0.7), `node tests/v071.mjs`, `node tests/v072.mjs`, `node tests/v073.mjs`, `node tests/v074.mjs`, `node tests/v075.mjs`, `node tests/v076.mjs`, `node tests/v077.mjs`, `node tests/v078.mjs`, `node tests/v0711.mjs`, `node tests/v0712.mjs`, `node tests/v0713.mjs`, `node tests/v0714.mjs`, `node tests/v0715.mjs`, `node tests/v0716.mjs`, `node tests/v0717.mjs`, `node tests/v0718.mjs`, `node tests/v080.mjs`, `node tests/v081.mjs`, `node tests/v082.mjs`, `node tests/v083.mjs`, `node tests/v084.mjs`, `node tests/v085.mjs` y `node tests/v086.mjs` hasta 0 errores.
 - Solo visualización: NO añadir diagnóstico automático ni IA sin pedirlo. Citar licencias de los motores.
 
 ## Arquitectura (ver CONTEXTO.md para el detalle)
 - Vite 8 + JavaScript (sin framework). `src/main.js` = interfaz (equivalente al Wizard de VOXEL).
 - `@cornerstonejs/core` + `tools` + `dicom-image-loader` 5.8 (render, MPR, herramientas, decodificación
   con wasm) · `@kitware/vtk.js` 36 (presets, clipping, planos, mediciones 3D, marching cubes, texturas) ·
-  `dicom-parser` (cabeceras y DICOMDIR) · `dcmjs` (volcado de metadatos) · `fflate` (ZIP) · MediaPipe Face
+  `dicom-parser` (cabeceras y DICOMDIR) · `dcmjs` (volcado de metadatos) · `fflate` (ZIP, en `core/unzip.worker.js`) · `node-unrar-js` (RAR, `core/unrar.worker.js` + `unrar.wasm`) · `jspdf`
+  (informe PDF) · `pptxgenjs` (informe PowerPoint, chunk aparte) · MediaPipe Face
   Mesh legacy en `public/mediapipe/` (detección facial para el drapeado; sin CDN).
 - Tema: `src/theme.css` = paleta y tipografía (Poppins, `public/fonts/`) del MANUAL DE MARCA (`marca/`, v0.6.1);
   disposición heredada de VOXEL. Logos en `public/img/` derivados de los maestros de `marca/` (nunca redibujar);
   en la barra va el logo principal «DICOM viewer» (decisión de Manuel). Render 3D sobre `renderVolume.js` (≤ 400 vóx/eje).
 - Historia de deshacer/rehacer en `core/history.js` (`viewer.history`); vía aérea en `core/airway.js`;
-  panorámica en `core/panoramic.js`; cortes de ATM en `core/tmj.js`; guarda de geometría en `viewer.enforceGeometry`.
+  panorámica en `core/panoramic.js`; cortes de ATM en `core/tmj.js`; guarda de geometría en `viewer.enforceGeometry`;
+  orientación del caso (los 3 planos) en `viewer.setOrient` (+ `#orient-box` y `finishOrient` de `main.js`);
+  informe en `ui/report.js` (PDF) y `ui/reportPptx.js` (PowerPoint); sesión .tresd en el bloque SESIÓN de `main.js` (+ accesores SESIÓN de `viewer.js`);
+  telerradiografía simulada en `core/telerx.js` (+ bloque TELERRADIOGRAFÍA de `viewer.js`); nube de puntos «Rejilla»
+  en `core/pointCloud.js`; paquete .tresdz (DICOM con dcmjs + ZIP) en `core/sharePack.js` (+ `shareDialog` de `main.js`).
   Idiomas: `src/i18n/`.
 
 ## Flujo de trabajo (Claude)
@@ -84,4 +104,6 @@ No escribir en la interfaz ni en los textos «herramienta diagnóstica»: medida
    Los `/tmp/testdata` no sobreviven a una sesión nueva: regenerarlos con esos scripts (DZ-CBCT.nrrd se
    descarga de la muestra de 3D Slicer; ver CONTEXTO.md §4).
 4. Escribir en el PC de Manuel `src/`, `docs/`, `public/`, configs (device_commit_files; device_bash NO monta).
+   En `docs/assets/` van TAMBIÉN los chunks: `unzip.worker.js`, `unrar.worker.js`, `unrar.wasm`, `pptxgen.es.js`, `reportPptx.js`, `rolldown-runtime.js`,
+   `index.es.js`, `html2canvas.js`, `purify.es.js` (jsPDF), y `docs/manifest.webmanifest`.
 5. Manuel: doble clic en `SUBIR_GITHUB.bat` → GitHub Pages actualiza la web en ~1 minuto.

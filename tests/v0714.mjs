@@ -49,11 +49,11 @@ const fb = await ev(() => {
   const row = b.parentElement, kids = [...row.children];
   const rb = b.getBoundingClientRect(), rf = document.querySelector('#btn-font').getBoundingClientRect();
   return { tag: b.tagName, inHeader: !!b.closest('header'), inFooter: !!b.closest('footer'), txt: b.textContent.trim(),
-    afterRotate: kids.indexOf(b) === kids.indexOf(document.querySelector('#btn-rotate')) + 1, beforeFont: kids.indexOf(b) === kids.indexOf(document.querySelector('#btn-font')) - 1,
+    afterRotate: kids.indexOf(b) === kids.indexOf(document.querySelector('#btn-report')) + 1, beforeFont: kids.indexOf(b) === kids.indexOf(document.querySelector('#btn-font')) - 1,
     h: Math.round(rb.height), hFont: Math.round(rf.height), visible: rb.width > 0 };
 });
 check(fb && fb.tag === 'BUTTON' && fb.inHeader && !fb.inFooter, 'es un botón de la cabecera (ya no un enlace del pie)');
-check(fb && fb.afterRotate && fb.beforeFont, 'colocado entre «Rotación» y «Aa»');
+check(fb && fb.afterRotate && fb.beforeFont, 'colocado entre «Informe» y «Aa» (Rotación pasó a la barra de vistas en v0.8.3)');
 check(fb && fb.visible && Math.abs(fb.h - fb.hFont) <= 2, `mismo alto que los demás botones (${fb && fb.h} px)`);
 await page.click('#btn-feedback'); await sleep(300);
 check((await page.locator('.modal.feedback').count()) === 1, 'abre la ventana de valoración');

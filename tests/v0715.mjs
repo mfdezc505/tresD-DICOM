@@ -120,7 +120,8 @@ await page.click('#pan-edit'); await sleep(1200);
 check(await page.locator('#pe-bar').isVisible() && /Terminar de editar/.test(await page.textContent('#pe-done')), 'con la curva en edición aparece «✔ Terminar de editar» sobre el axial');
 const inside = await ev(() => {
   const vp = document.querySelector('.vp[data-id="vpPan"]').getBoundingClientRect();
-  return [...document.querySelectorAll('.vp[data-id="vpPan"] .pan-bar button')].every((b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.right <= vp.right + 1 && r.left >= vp.left - 1; });
+  // (v0.7.17: «Borrar medidas» está oculto sin medidas; no cuenta)
+  return [...document.querySelectorAll('.vp[data-id="vpPan"] .pan-bar button')].filter((b) => getComputedStyle(b).display !== 'none').every((b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.right <= vp.right + 1 && r.left >= vp.left - 1; });
 });
 check(inside, 'ningún botón de la barra de la panorámica queda cortado (la barra se parte en filas)');
 await shot('v0715_editar_curva.png');

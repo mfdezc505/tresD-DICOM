@@ -13,12 +13,15 @@ export function buildLayout(root) {
       <div id="patient-chip" class="hidden" data-i18n-title="pat_chip_tip"></div>
       <button id="btn-patient-edit" class="btn-ghost btn-icon hidden" data-i18n-title="pat_edit_tip">✎</button>
       <div class="spacer"></div>
+      <button id="btn-open" class="btn-ghost btn-icon" data-i18n-title="sess_open_tip">📂</button>
+      <button id="btn-save" class="btn-ghost btn-icon hidden" data-i18n-title="sess_save_tip">💾</button>
+      <button id="btn-share" class="btn-ghost btn-icon hidden" data-i18n-title="share_tip">📦</button>
       <button id="btn-new" class="btn-ghost hidden" data-i18n="new_btn" data-i18n-title="new_tip"></button>
       <button id="btn-undo" class="btn-ghost btn-icon hidden" data-i18n-title="undo_tip" disabled>↶</button>
       <button id="btn-redo" class="btn-ghost btn-icon hidden" data-i18n-title="redo_tip" disabled>↷</button>
-      <button id="btn-meta" class="btn-ghost hidden" data-i18n="meta_btn"></button>
+      <button id="btn-meta" class="btn-ghost btn-icon hidden" data-i18n-title="meta_btn">🏷️</button>
       <button id="btn-shot" class="btn-ghost hidden">📷 <span data-i18n="shot_btn"></span></button>
-      <button id="btn-rotate" class="btn-ghost hidden" aria-pressed="false">⟳ <span data-i18n="rotate_btn"></span></button>
+      <button id="btn-report" class="btn-ghost hidden" data-i18n-title="rep_tip">📄 <span data-i18n="rep_btn"></span></button>
       <button id="btn-feedback" class="btn-ghost" data-i18n="fb_btn" data-i18n-title="fb_hint"></button>
       <button id="btn-font" class="btn-ghost btn-icon" data-i18n-title="font_btn">Aa</button>
       <button id="btn-help" class="btn-ghost btn-icon" data-i18n-title="help_btn">?</button>
@@ -34,6 +37,7 @@ export function buildLayout(root) {
       <button class="btn-ghost" data-view="inf" data-i18n="view_inf"></button>
       <button class="btn-ghost" data-view="post" data-i18n="view_post"></button>
       <button class="btn-ghost" id="btn-center" data-i18n="view_center"></button>
+      <button id="btn-rotate" class="btn-ghost" aria-pressed="false" data-i18n-title="rotate_tip">⟳ <span data-i18n="rotate_btn"></span></button>
       <div class="layout-group">
         <button class="btn-ghost" data-layout="quad" data-i18n="layout_quad"></button>
         <button class="btn-ghost" data-layout="main3" data-i18n="layout_main3"></button>
@@ -43,6 +47,7 @@ export function buildLayout(root) {
         <button class="btn-ghost" data-layout="vpCor" data-i18n="layout_coronal"></button>
         <button class="btn-ghost" data-layout="vpSag" data-i18n="layout_sagittal"></button>
         <button class="btn-ghost" data-layout="vpPan" data-i18n="layout_pan"></button>
+        <button class="btn-ghost" data-layout="vpTele" data-i18n="layout_tele" data-i18n-title="layout_tele_tip"></button>
         <button class="btn-ghost hidden" data-layout="vpAtm" id="lay-atm" data-i18n="layout_atm"></button>
       </div>
       <button class="btn-ghost" id="btn-cross" aria-pressed="false" data-i18n="cross_btn" data-i18n-title="cross_tip"></button>
@@ -61,7 +66,7 @@ export function buildLayout(root) {
         <button id="btn-zip" class="btn-ghost big" data-i18n="upload_zip"></button>
         <input id="in-folder" type="file" webkitdirectory directory multiple hidden>
         <input id="in-files" type="file" multiple hidden>
-        <input id="in-zip" type="file" accept=".zip" hidden>
+        <input id="in-zip" type="file" accept=".zip,.rar,.tresdz" hidden>
       </div>
       <div class="group" id="g2">
         <div class="gtitle" data-i18n="g2_title"></div>
@@ -73,6 +78,7 @@ export function buildLayout(root) {
         <button id="btn-photo" class="btn-ghost big" data-i18n="photo_btn"></button>
         <button id="btn-seg" class="btn-ghost big" data-i18n="seg_btn"></button>
         <input id="in-photo" type="file" accept="image/*" hidden>
+  <input type="file" id="in-session" accept=".tresd,.tresdz,.zip,.rar,application/json" hidden>
         <button id="btn-airway" class="btn-ghost big" data-i18n="airway_btn"></button>
         <button id="btn-atm" class="btn-ghost big" data-i18n="atm_btn"></button>
       </div>
@@ -89,6 +95,13 @@ export function buildLayout(root) {
           <label class="chk"><input type="checkbox" id="cut-flip" disabled><span data-i18n="cut_flip"></span></label>
         </div>
         <input type="range" id="cut-slider" min="0" max="100" value="50" disabled>
+        <button id="btn-orient" class="btn-ghost hidden" aria-pressed="false" data-i18n="or_btn" data-i18n-title="or_btn_tip"></button>
+        <div class="orient-box hidden" id="orient-box">
+          <label class="orow"><span data-i18n="or_pitch"></span><input type="range" id="or-x" min="-30" max="30" step="0.5" value="0" data-i18n-title="or_pitch_tip"><b id="or-x-val">0°</b></label>
+          <label class="orow"><span data-i18n="or_roll"></span><input type="range" id="or-y" min="-30" max="30" step="0.5" value="0" data-i18n-title="or_roll_tip"><b id="or-y-val">0°</b></label>
+          <label class="orow"><span data-i18n="or_yaw"></span><input type="range" id="or-z" min="-30" max="30" step="0.5" value="0" data-i18n-title="or_yaw_tip"><b id="or-z-val">0°</b></label>
+          <button id="or-reset" class="btn-ghost" data-i18n="or_reset"></button>
+        </div>
         <div class="tools">
           <button id="btn-dist" class="btn-ghost" aria-pressed="false" data-i18n="measure_dist"></button>
           <button id="btn-ang" class="btn-ghost" aria-pressed="false" data-i18n="measure_ang"></button>
@@ -103,6 +116,7 @@ export function buildLayout(root) {
       <div id="main-drop" class="drop">
         <img id="main-logo" alt="tresD DICOM viewer">
         <span class="drop-cta" data-i18n="drop_big" style="white-space:pre-line"></span>
+        <div class="drop-btns"><button id="drop-folder" class="btn-ghost big" data-i18n="drop_folder"></button><button id="drop-open" class="btn-ghost big" data-i18n="drop_open"></button></div>
         <span class="owner" data-i18n="owner_line"></span>
       </div>
       <div id="grid" data-layout="quad" class="hidden">
@@ -124,6 +138,23 @@ export function buildLayout(root) {
           <span class="vplabel" data-i18n="vp_pan"></span>
 
           <span class="orient l">D</span><span class="orient r">I</span>
+        </div>
+        <div class="vp hidden" data-id="vpTele">
+          <div class="pan-wrap"><canvas id="tele-canvas"></canvas></div>
+          <div class="pan-bar">
+            <button class="btn-ghost" id="tele-lat" aria-pressed="true" data-i18n="tele_lat" data-i18n-title="tele_lat_tip"></button>
+            <button class="btn-ghost" id="tele-pa" aria-pressed="false" data-i18n="tele_pa" data-i18n-title="tele_pa_tip"></button>
+            <span class="vsep"></span>
+            <button class="btn-ghost" id="tele-ray" aria-pressed="true" data-i18n="tele_ray" data-i18n-title="tele_ray_tip"></button>
+            <button class="btn-ghost" id="tele-mip" aria-pressed="false" data-i18n="tele_mip" data-i18n-title="tele_mip_tip"></button>
+            <label data-i18n="tele_tilt" data-i18n-title="tele_tilt_tip"></label><input type="range" id="tele-tilt" min="-20" max="20" step="0.5" value="0"><span id="tele-tilt-val">0°</span>
+            <span class="spacer" style="flex:1"></span>
+            <button class="btn-ghost" id="tele-len" aria-pressed="false" data-i18n="ab_len" data-i18n-title="ab_len_tip"></button>
+            <button class="btn-ghost" id="tele-ang" aria-pressed="false" data-i18n="ab_ang" data-i18n-title="ab_ang_tip"></button>
+            <button class="btn-ghost hidden" id="tele-clear" data-i18n="atm_clear"></button>
+          </div>
+          <span class="vplabel" data-i18n="vp_tele"></span>
+          <span class="orient l" id="tele-ol">P</span><span class="orient r" id="tele-or">A</span>
         </div>
         <div class="vp hidden" data-id="vpAtm">
           <div class="atm-grid" id="atm-grid"></div>
@@ -161,9 +192,10 @@ export function buildLayout(root) {
             <option value="soft" data-i18n="preset_soft"></option>
             <option value="airway" data-i18n="preset_airway"></option>
             <option value="default" data-i18n="preset_default"></option>
+            <option value="grid" data-i18n="preset_grid"></option>
           </select>
         </div>
-        <div class="wrow"><label class="chk"><input type="checkbox" id="sil-vis" checked><span data-i18n="silhouettes"></span></label></div>
+        <div class="wrow"><label class="chk"><input type="checkbox" id="sil-vis"><span data-i18n="silhouettes"></span></label></div>
       </div>
       <div class="card dicom collapsible" id="mpr-card">
         <button class="ctitle" data-i18n="mpr_card"></button>
@@ -205,7 +237,7 @@ function vp(id, labelKey) {
   return `<div class="vp" data-id="${id}">
     <div class="cs" id="${id}" oncontextmenu="return false"></div>${bar}
     <span class="vplabel" data-i18n="${labelKey}"></span>
-    <span class="vpinfo"></span>${orient}
+    <span class="vpinfo"></span>${orient}${id === 'vp3d' ? '' : `<input type="range" class="vslice hidden" data-vp="${id}" min="0" max="1" value="0" data-i18n-title="slice_slider_tip">`}
     <button class="btn-ghost vpmax" data-max="${id}" data-i18n-title="maximize">⤢</button>
   </div>`;
 }

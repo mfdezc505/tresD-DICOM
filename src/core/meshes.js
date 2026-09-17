@@ -349,7 +349,7 @@ export class MeshLayer {
     const i0 = axis === 'x' ? 1 : 0, i1 = axis === 'y' ? 2 : axis === 'x' ? 2 : 1;   // ejes que se invierten
     for (let i = 0; i < pts.length; i += 3) { pts[i + i0] = 2 * c[i0] - pts[i + i0]; pts[i + i1] = 2 * c[i1] - pts[i + i1]; }
     it.polydata.getPointData().setNormals(vtkDataArray.newInstance({ name: 'Normals', numberOfComponents: 3, values: vertexNormals(pts, it.polys) }));
-    it.polydata.getPoints().modified(); it.polydata.modified();
+    it.polydata.getPoints().dataChange(); it.polydata.modified();   // dataChange: invalida los LÍMITES cacheados (modified no lo hace; v0.8.2)
     it.bounds = bounds(pts); it.rev = (it.rev || 0) + 1;
     if (it.M) {                                   // el giro se compone en M para que la otra arcada lo herede igual
       const F = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -395,7 +395,7 @@ export class MeshLayer {
     const it = snap && this.get(snap.id); if (!it) return;
     it.pts.set(snap.pts); it.M = snap.M; it.align = snap.align;
     it.polydata.getPointData().setNormals(vtkDataArray.newInstance({ name: 'Normals', numberOfComponents: 3, values: vertexNormals(it.pts, it.polys) }));
-    it.polydata.getPoints().modified(); it.polydata.modified();
+    it.polydata.getPoints().dataChange(); it.polydata.modified();   // dataChange: invalida los LÍMITES cacheados (modified no lo hace; v0.8.2)
     it.bounds = bounds(it.pts); it.rev = (it.rev || 0) + 1;
   }
 
@@ -404,7 +404,29 @@ export class MeshLayer {
     const it = this.get(id); if (!it) return;
     applyMatrix(it.pts, T);
     it.polydata.getPointData().setNormals(vtkDataArray.newInstance({ name: 'Normals', numberOfComponents: 3, values: vertexNormals(it.pts, it.polys) }));
-    it.polydata.getPoints().modified(); it.polydata.modified();
+    it.polydata.getPoints().dataChange(); it.polydata.modified();   // dataChange: invalida los LÍMITES cacheados (modified no lo hace; v0.8.2)
+    it.bounds = bounds(it.pts); it.rev = (it.rev || 0) + 1;
+    if (it.M) it.M = mul4(T, it.M);
+  }
+
+  /**
+   * Giro RÍGIDO (v0.8.6): como `transform`, pero las normales se GIRAN en vez de recalcularse triángulo a
+   * triángulo. En un giro puro el resultado es el mismo y cuesta la décima parte, así que se puede aplicar
+   * mientras se arrastran los deslizadores de orientación sin que se note el tirón.
+   */
+  rotate(id, T) {
+    const it = this.get(id); if (!it) return;
+    applyMatrix(it.pts, T);
+    const nr = it.polydata.getPointData().getNormals();
+    if (nr) {
+      const v = nr.getData();
+      for (let i = 0; i < v.length; i += 3) {
+        const x = v[i], y = v[i + 1], z = v[i + 2];
+        v[i] = T[0] * x + T[1] * y + T[2] * z; v[i + 1] = T[4] * x + T[5] * y + T[6] * z; v[i + 2] = T[8] * x + T[9] * y + T[10] * z;
+      }
+      nr.modified();
+    }
+    it.polydata.getPoints().dataChange(); it.polydata.modified();
     it.bounds = bounds(it.pts); it.rev = (it.rev || 0) + 1;
     if (it.M) it.M = mul4(T, it.M);
   }
@@ -490,6 +512,26 @@ function rayHitsBox(o, d, b, maxT) {
  * los volteos, así que se exporta en el marco del paciente, igual que se ve en pantalla).
  * Devuelve un ArrayBuffer listo para descargar. 84 bytes de cabecera + 50 por triángulo.
  */
+/** PLY binario (little endian) con el color por vértice si lo hay (v0.8.4: los escáneres con color van así en el paquete). */
+export function writePLY(item, comment = 'tresD DICOM') {
+  const pts = item.pts, P = item.polys, n = pts.length / 3, nTri = P.length / 3, col = item.colors && item.colors.length === pts.length ? item.colors : null;
+  const header = ['ply', 'format binary_little_endian 1.0', `comment ${comment}`, `element vertex ${n}`, 'property float x', 'property float y', 'property float z']
+    .concat(col ? ['property uchar red', 'property uchar green', 'property uchar blue'] : [])
+    .concat([`element face ${nTri}`, 'property list uchar int vertex_indices', 'end_header', '']).join('\n');
+  const head = new TextEncoder().encode(header);
+  const vs = col ? 15 : 12;
+  const buf = new ArrayBuffer(head.length + n * vs + nTri * 13);
+  new Uint8Array(buf).set(head, 0);
+  const dv = new DataView(buf);
+  let o = head.length;
+  for (let i = 0; i < n; i++) {
+    dv.setFloat32(o, pts[3 * i], true); dv.setFloat32(o + 4, pts[3 * i + 1], true); dv.setFloat32(o + 8, pts[3 * i + 2], true); o += 12;
+    if (col) { dv.setUint8(o, col[3 * i]); dv.setUint8(o + 1, col[3 * i + 1]); dv.setUint8(o + 2, col[3 * i + 2]); o += 3; }
+  }
+  for (let t = 0; t < P.length; t += 3) { dv.setUint8(o, 3); dv.setInt32(o + 1, P[t], true); dv.setInt32(o + 5, P[t + 1], true); dv.setInt32(o + 9, P[t + 2], true); o += 13; }
+  return buf;
+}
+
 export function writeSTL(item, header = 'tresD DICOM') {
   const pts = item.pts, P = item.polys, nTri = P.length / 3;
   const buf = new ArrayBuffer(84 + 50 * nTri);

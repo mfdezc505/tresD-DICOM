@@ -40,6 +40,7 @@ await page.goto('http://localhost:8788/');
 await sleep(500);
 await page.setInputFiles('#in-folder', '/tmp/testdata/cbct_half');
 await page.waitForFunction(() => /^(Cargado|Aviso)/.test(document.querySelector('#status-text').textContent), null, { timeout: 300000 });
+await page.check('#sil-vis'); await page.waitForTimeout(300);   // v0.8.3: las siluetas van apagadas por defecto; estas pruebas las necesitan
 await sleep(1000);
 check(true, 'CBCT cargado');
 
